@@ -1,0 +1,12 @@
+pandas
+openpyxl
+python-docx
+PyPDF2          # or pdfplumber
+sentence-transformers
+faiss-cpu       # or chromadb
+numpy
+transformers
+requests
+python-dotenv
+# optional OCR
+easyocr
