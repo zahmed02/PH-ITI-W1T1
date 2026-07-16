@@ -1,0 +1,1 @@
+SELECT * FROM doctors ORDER BY id;

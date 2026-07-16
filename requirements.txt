@@ -15,3 +15,5 @@ uvicorn
 pydantic
 python-multipart
 groq
+sqlalchemy
+psycopg2-binary

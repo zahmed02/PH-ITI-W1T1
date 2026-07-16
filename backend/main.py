@@ -1,15 +1,14 @@
-# backend/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-import os
-
+from backend.database import engine, Base
 from backend.routes import router
+from backend.chat_router import router as chat_router
 
-app = FastAPI(title="File Q&A Chatbot API")
+# Create tables
+Base.metadata.create_all(bind=engine)
 
-# CORS
+app = FastAPI(title="Medical Appointment System API", version="1.0.0")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,21 +17,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# API routes
-app.include_router(router, prefix="/api")
+app.include_router(router)
+app.include_router(chat_router)
 
-# Serve static files (frontend)
-frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend")
-if os.path.exists(frontend_dir):
-    app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
-
-# Root endpoint
 @app.get("/")
-async def serve_frontend():
-    index_path = os.path.join(frontend_dir, "index.html")
-    if os.path.exists(index_path):
-        return FileResponse(index_path)
-    return {"message": "Frontend not found"}
+def root():
+    return {"message": "Medical Appointment System API", "docs": "/docs"}
 
 if __name__ == "__main__":
     import uvicorn
