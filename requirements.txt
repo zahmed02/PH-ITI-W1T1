@@ -1,12 +1,17 @@
 pandas
 openpyxl
 python-docx
-PyPDF2          # or pdfplumber
+PyPDF2
 sentence-transformers
-faiss-cpu       # or chromadb
+faiss-cpu
 numpy
 transformers
 requests
 python-dotenv
-# optional OCR
 easyocr
+accelerate
+fastapi
+uvicorn
+pydantic
+python-multipart
+groq

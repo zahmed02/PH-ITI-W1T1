@@ -1,4 +1,3 @@
-# file_loader.py
 import os
 import pandas as pd
 import docx
@@ -32,7 +31,6 @@ def load_file(file_path: str) -> str:
         with open(file_path, 'r', encoding='utf-8') as f:
             text = f.read()
     elif ext in ['.png', '.jpg', '.jpeg']:
-        # OCR with EasyOCR (requires internet for model download on first run)
         reader = easyocr.Reader(['en'])
         result = reader.readtext(file_path, detail=0)
         text = " ".join(result)

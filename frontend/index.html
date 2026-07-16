@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Q&A Chatbot</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>File Q&A Chatbot</h1>
+            <p>Upload a file and ask questions about its content</p>
+        </header>
+
+        <section class="file-section">
+            <div class="file-input">
+                <label for="filePath">File Path:</label>
+                <input type="text" id="filePath" placeholder="Enter file path (e.g., company_sales.xlsx)" />
+                <button id="loadBtn" onclick="loadFile()">Load File</button>
+            </div>
+            <div id="loadStatus" class="status"></div>
+        </section>
+
+        <section class="chat-section">
+            <div id="chatMessages" class="chat-messages">
+                <div class="message bot">
+                    Hello! Load a file and then ask me anything about it.
+                </div>
+            </div>
+            <div class="chat-input">
+                <input type="text" id="questionInput" placeholder="Type your question..." />
+                <button id="sendBtn" onclick="sendQuestion()">Ask</button>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:8000/api';
+        let isFileLoaded = false;
+
+        function addMessage(text, sender) {
+            const messagesDiv = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}`;
+            messageDiv.textContent = text;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        async function loadFile() {
+            const filePath = document.getElementById('filePath').value.trim();
+            if (!filePath) {
+                alert('Please enter a file path.');
+                return;
+            }
+
+            const statusDiv = document.getElementById('loadStatus');
+            statusDiv.textContent = '⏳ Loading file...';
+            statusDiv.className = 'status loading';
+
+            try {
+                const response = await fetch(`${API_URL}/load`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ file_path: filePath })
+                });
+
+                const data = await response.json();
+                if (response.ok && data.status === 'success') {
+                    statusDiv.textContent = `✅ File loaded! Indexed ${data.chunks} chunks.`;
+                    statusDiv.className = 'status success';
+                    isFileLoaded = true;
+                    addMessage(`File loaded successfully! You can now ask questions about it.`, 'bot');
+                } else {
+                    statusDiv.textContent = `❌ Error: ${data.detail || data.message || 'Failed to load file'}`;
+                    statusDiv.className = 'status error';
+                }
+            } catch (error) {
+                statusDiv.textContent = `❌ Error: ${error.message}`;
+                statusDiv.className = 'status error';
+            }
+        }
+
+        async function sendQuestion() {
+            const input = document.getElementById('questionInput');
+            const question = input.value.trim();
+            if (!question) return;
+
+            if (!isFileLoaded) {
+                alert('Please load a file first.');
+                return;
+            }
+
+            addMessage(question, 'user');
+            input.value = '';
+            addMessage('⏳ Thinking...', 'bot');
+
+            try {
+                const response = await fetch(`${API_URL}/ask`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question: question })
+                });
+
+                const data = await response.json();
+                const messages = document.getElementById('chatMessages');
+                messages.removeChild(messages.lastChild);
+
+                if (response.ok) {
+                    addMessage(data.answer, 'bot');
+                } else {
+                    addMessage(`❌ Error: ${data.detail || 'Failed to get answer'}`, 'bot');
+                }
+            } catch (error) {
+                const messages = document.getElementById('chatMessages');
+                messages.removeChild(messages.lastChild);
+                addMessage(`❌ Error: ${error.message}`, 'bot');
+            }
+        }
+
+        document.getElementById('questionInput').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                sendQuestion();
+            }
+        });
+
+        document.getElementById('filePath').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                loadFile();
+            }
+        });
+    </script>
+</body>
+</html>
