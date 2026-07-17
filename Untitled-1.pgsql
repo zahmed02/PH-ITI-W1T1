@@ -1,1 +1,1 @@
-SELECT * FROM doctors ORDER BY id;
+SELECT * FROM appointments WHERE id = 26;

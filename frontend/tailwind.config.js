@@ -1,0 +1,63 @@
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: [
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {
+      colors: {
+        "primary": "#003c90",
+        "on-primary": "#ffffff",
+        "primary-container": "#d9e2ff",
+        "on-primary-container": "#001945",
+        "secondary": "#006970",
+        "on-secondary": "#ffffff",
+        "secondary-container": "#7af1fc",
+        "on-secondary-container": "#002022",
+        "surface": "#f9f9ff",
+        "on-surface": "#111c2c",
+        "surface-container": "#e7eeff",
+        "surface-container-low": "#f0f3ff",
+        "surface-container-high": "#dee8ff",
+        "surface-container-lowest": "#ffffff",
+        "surface-variant": "#d8e3fa",
+        "on-surface-variant": "#434653",
+        "outline": "#737784",
+        "outline-variant": "#c3c6d5",
+        "error": "#ba1a1a",
+        "on-error": "#ffffff",
+        "error-container": "#ffdad6",
+        "on-error-container": "#93000a",
+        "background": "#f9f9ff",
+        "on-background": "#111c2c",
+        "inverse-surface": "#263142",
+        "inverse-on-surface": "#ebf1ff",
+        "inverse-primary": "#b0c6ff",
+      },
+      fontFamily: {
+        'body-md': ['Inter', 'sans-serif'],
+        'label-md': ['Inter', 'sans-serif'],
+        'headline-sm': ['Manrope', 'sans-serif'],
+        'headline-md': ['Manrope', 'sans-serif'],
+        'headline-lg': ['Manrope', 'sans-serif'],
+      },
+      fontSize: {
+        'label-md': ['14px', { lineHeight: '16px', letterSpacing: '0.05em', fontWeight: '600' }],
+        'body-md': ['16px', { lineHeight: '24px', fontWeight: '400' }],
+        'headline-sm': ['20px', { lineHeight: '28px', fontWeight: '600' }],
+        'headline-md': ['28px', { lineHeight: '36px', fontWeight: '600' }],
+        'headline-lg': ['40px', { lineHeight: '52px', letterSpacing: '-0.02em', fontWeight: '700' }],
+      },
+      spacing: {
+        'gutter': '24px',
+        'margin-desktop': '48px',
+        'container-max': '1280px',
+      },
+      borderRadius: {
+        'xl': '0.75rem',
+      },
+    },
+  },
+  plugins: [],
+}

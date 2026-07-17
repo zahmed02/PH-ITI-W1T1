@@ -17,8 +17,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(router)
-app.include_router(chat_router)
+# Include both routers under /api prefix
+app.include_router(router, prefix="/api")
+app.include_router(chat_router, prefix="/api")
 
 @app.get("/")
 def root():

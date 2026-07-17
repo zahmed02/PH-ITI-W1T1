@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, Float, TIMESTAMP, ForeignKey, CheckConstraint
+from sqlalchemy import Column, Integer, String, Text, Float, TIMESTAMP, ForeignKey, CheckConstraint, Time
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from backend.database import Base
@@ -17,6 +17,7 @@ class Doctor(Base):
 
     reviews = relationship("Review", back_populates="doctor", cascade="all, delete")
     appointments = relationship("Appointment", back_populates="doctor", cascade="all, delete")
+    availability = relationship("DoctorAvailability", back_populates="doctor", cascade="all, delete")
 
 class Patient(Base):
     __tablename__ = "patients"
@@ -57,3 +58,15 @@ class Review(Base):
 
     doctor = relationship("Doctor", back_populates="reviews")
     patient = relationship("Patient", back_populates="reviews")
+
+# NEW: DoctorAvailability model
+class DoctorAvailability(Base):
+    __tablename__ = "doctor_availability"
+
+    id = Column(Integer, primary_key=True, index=True)
+    doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
+    day_of_week = Column(Integer, nullable=False)  # 0=Monday, 6=Sunday
+    start_time = Column(Time, nullable=False)
+    end_time = Column(Time, nullable=False)
+
+    doctor = relationship("Doctor", back_populates="availability")
