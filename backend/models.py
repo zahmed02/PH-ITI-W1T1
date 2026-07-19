@@ -12,6 +12,7 @@ class Doctor(Base):
     specialty = Column(String(100), nullable=False)
     years_of_experience = Column(Integer, nullable=False)
     bio = Column(Text)
+    profile_image = Column(String(255), nullable=True)
     rating = Column(Float, default=0.0)
     created_at = Column(TIMESTAMP, server_default=func.now())
 

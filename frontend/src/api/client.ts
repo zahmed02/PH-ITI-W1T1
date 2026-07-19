@@ -27,3 +27,19 @@ export const sendChatMessage = (query: string, patientId?: number) =>
 // Reviews
 export const getReviewsByDoctor = (doctorId: number) =>
   api.get(`/reviews/doctor/${doctorId}`).then(res => res.data);
+
+// Get appointments by doctor
+export const getAppointmentsByDoctor = (doctorId: number) =>
+  api.get(`/appointments/doctor/${doctorId}`).then(res => res.data);
+
+// Get doctor availability (working hours)
+export const getDoctorAvailability = (doctorId: number) =>
+  api.get(`/doctors/${doctorId}/availability`).then(res => res.data);
+
+export const uploadDoctorImage = (doctorId: number, file: File) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  return api.post(`/doctors/${doctorId}/image`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(res => res.data);
+};

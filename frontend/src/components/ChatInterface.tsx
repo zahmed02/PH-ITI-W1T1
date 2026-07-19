@@ -7,7 +7,7 @@ interface Props {
 
 export default function ChatInterface({ patientId }: Props) {
   const [messages, setMessages] = useState<{ role: 'user' | 'bot'; text: string }[]>([
-    { role: 'bot', text: "Hello! I'm your MedCare Assistant. How can I help you today?" }
+    { role: 'bot', text: "Hello! I'm your Stellaris AI Assistant. How can I help you today?" }
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -22,7 +22,7 @@ export default function ChatInterface({ patientId }: Props) {
     try {
       const res = await sendChatMessage(userMsg, patientId);
       setMessages(prev => [...prev, { role: 'bot', text: res.response }]);
-    } catch (err) {
+    } catch {
       setMessages(prev => [...prev, { role: 'bot', text: 'Sorry, an error occurred.' }]);
     } finally {
       setLoading(false);
@@ -30,83 +30,107 @@ export default function ChatInterface({ patientId }: Props) {
   };
 
   const suggestedActions = [
-    { icon: 'calendar_month', label: "Find a cardiologist for tomorrow" },
-    { icon: 'favorite', label: "Book appointment for cardiology" },
-    { icon: 'description', label: "Show my medical records" },
+    { icon: 'calendar_add_on', label: 'Book Appointment' },
+    { icon: 'schedule', label: 'Check Schedules' },
+    { icon: 'info', label: 'General Inquiry' },
   ];
 
   return (
-    <div className="bg-surface-container-lowest border border-outline-variant rounded-xl shadow-sm p-4">
-      <div className="h-96 overflow-y-auto mb-4 space-y-4" id="chat-history">
+    <div className="bg-white/90 backdrop-blur-sm rounded-xl border border-outline-variant shadow-sm flex flex-col h-[600px]">
+      {/* Header */}
+      <div className="bg-surface-container-high px-4 py-3 flex items-center justify-between border-b border-outline-variant">
+        <div className="flex items-center gap-3">
+          <div className="h-9 w-9 rounded-full bg-primary flex items-center justify-center text-on-primary">
+            <span className="material-symbols-outlined">smart_toy</span>
+          </div>
+          <div>
+            <h2 className="font-semibold text-primary">Stellaris AI Assistant</h2>
+            <p className="text-xs text-secondary flex items-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-secondary animate-pulse"></span>
+              Clinical Protocol Active
+            </p>
+          </div>
+        </div>
+        <button className="p-1 hover:bg-surface-variant rounded-full transition-colors">
+          <span className="material-symbols-outlined text-on-surface-variant">more_vert</span>
+        </button>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map((msg, idx) => (
-          <div
-            key={idx}
-            className={`flex gap-4 max-w-[85%] ${msg.role === 'user' ? 'ml-auto flex-row-reverse' : ''}`}
-          >
-            <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center shadow-sm ${msg.role === 'user' ? 'bg-primary text-white' : 'bg-secondary-container text-on-secondary-container'}`}>
-              <span className="material-symbols-outlined">
-                {msg.role === 'user' ? 'person' : 'smart_toy'}
-              </span>
-            </div>
-            <div className="space-y-2">
-              <div className={`p-4 rounded-2xl ${msg.role === 'user' ? 'bg-primary text-white rounded-tr-none' : 'bg-surface-container-low border border-outline-variant/20 rounded-tl-none'}`}>
-                <p className="text-body-md">{msg.text}</p>
+          <div key={idx} className={`flex items-start gap-3 ${msg.role === 'user' ? 'justify-end' : ''}`}>
+            {msg.role === 'bot' && (
+              <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center shrink-0">
+                <span className="material-symbols-outlined text-on-primary text-sm">smart_toy</span>
               </div>
+            )}
+            <div className={`max-w-[80%] px-4 py-2 rounded-xl ${
+              msg.role === 'user'
+                ? 'bg-primary-container text-on-primary rounded-tr-none'
+                : 'bg-white border border-outline-variant rounded-tl-none'
+            }`}>
+              <p className="text-sm">{msg.text}</p>
             </div>
+            {msg.role === 'user' && (
+              <div className="h-8 w-8 rounded-full bg-surface-container-highest flex items-center justify-center border border-outline-variant">
+                <span className="material-symbols-outlined text-on-surface-variant text-sm">person</span>
+              </div>
+            )}
           </div>
         ))}
         {loading && (
-          <div className="flex gap-4 max-w-[85%]">
-            <div className="flex-shrink-0 w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center shadow-sm">
-              <span className="material-symbols-outlined text-on-secondary-container">smart_toy</span>
+          <div className="flex items-start gap-3">
+            <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center shrink-0">
+              <span className="material-symbols-outlined text-on-primary text-sm">smart_toy</span>
             </div>
-            <div className="p-4 bg-surface-container-low border border-outline-variant/20 rounded-2xl rounded-tl-none">
-              <p className="text-body-md text-on-surface-variant">Thinking...</p>
+            <div className="bg-white border border-outline-variant px-4 py-2 rounded-xl rounded-tl-none">
+              <p className="text-sm text-on-surface-variant">Thinking...</p>
             </div>
           </div>
         )}
       </div>
 
       {/* Suggested Actions */}
-      <div className="flex flex-wrap gap-2 mb-4">
+      <div className="px-4 pb-2 flex flex-wrap gap-2">
         {suggestedActions.map((action, i) => (
           <button
             key={i}
             onClick={() => {
               setInput(action.label);
-              // Auto-send after a small delay for UX
-              setTimeout(() => sendMessage(), 100);
+              setTimeout(sendMessage, 100);
             }}
-            className="px-4 py-2 bg-surface-container-high hover:bg-surface-variant text-on-surface-variant text-label-md rounded-full border border-outline-variant/30 transition-all flex items-center gap-2 active:scale-95"
+            className="px-3 py-1.5 bg-surface-container text-primary border border-primary/20 rounded-full text-xs font-medium hover:bg-primary-container hover:text-on-primary transition-all flex items-center gap-1"
           >
-            <span className="material-symbols-outlined text-[18px]">{action.icon}</span>
+            <span className="material-symbols-outlined text-sm">{action.icon}</span>
             {action.label}
           </button>
         ))}
       </div>
 
-      {/* Input Area */}
-      <div className="relative bg-surface border border-outline-variant rounded-full shadow-lg flex items-center p-1.5 focus-within:ring-2 focus-within:ring-primary/20">
-        <button className="p-3 text-on-surface-variant hover:text-primary transition-colors">
-          <span className="material-symbols-outlined">attach_file</span>
-        </button>
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          className="flex-1 bg-transparent border-none focus:ring-0 px-4 text-body-md placeholder:text-on-surface-variant/60 outline-none"
-          placeholder="Ask anything about doctors or appointments..."
-          onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-        />
-        <button
-          onClick={sendMessage}
-          className="bg-primary text-white w-12 h-12 rounded-full flex items-center justify-center shadow-md active:scale-90 transition-transform"
-          disabled={loading}
-        >
-          <span className="material-symbols-outlined">send</span>
-        </button>
+      {/* Input */}
+      <div className="p-4 bg-white border-t border-outline-variant">
+        <div className="flex items-center gap-2 bg-surface-container-low border border-outline-variant rounded-lg px-3 py-1.5 focus-within:ring-2 focus-within:ring-primary/20">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            className="flex-1 bg-transparent border-none focus:ring-0 text-sm placeholder:text-on-surface-variant/50"
+            placeholder="Type your inquiry..."
+            onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+          />
+          <button
+            onClick={sendMessage}
+            className="bg-primary text-white h-8 w-8 rounded-lg flex items-center justify-center shadow-sm hover:shadow active:scale-95 transition-all"
+            disabled={loading}
+          >
+            <span className="material-symbols-outlined text-sm">send</span>
+          </button>
+        </div>
+        <p className="text-center text-xs text-on-surface-variant mt-1">
+          AI may provide general info. For emergencies, call <span className="text-tertiary font-bold">911</span>.
+        </p>
       </div>
-      <p className="text-center text-[10px] text-on-surface-variant mt-3 uppercase tracking-widest font-bold">Encrypted & HIPAA Compliant</p>
     </div>
   );
 }

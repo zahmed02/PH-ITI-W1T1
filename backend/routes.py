@@ -1,10 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Optional, List
+import os
+import shutil
+from datetime import datetime
 
 from backend.database import get_db
-from backend.models import Doctor, Patient, Appointment, Review
+from backend.models import Doctor, Patient, DoctorAvailability, Appointment, Review
 from backend.schemas import (
     DoctorResponse, DoctorWithDetails,
     AppointmentCreate, AppointmentResponse,
@@ -65,6 +68,48 @@ def search_doctors(
                 result.append(doc)
         return result
     return doctors
+
+@router.post("/doctors/{doctor_id}/image")
+async def upload_doctor_image(
+    doctor_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    doctor = db.query(Doctor).filter(Doctor.id == doctor_id).first()
+    if not doctor:
+        raise HTTPException(status_code=404, detail="Doctor not found")
+    
+    # Validate file type
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+    
+    # Create directory if not exists
+    upload_dir = "static/images/doctors"
+    os.makedirs(upload_dir, exist_ok=True)
+    
+    # Generate unique filename
+    ext = os.path.splitext(file.filename)[1]
+    filename = f"doctor_{doctor_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}{ext}"
+    file_path = os.path.join(upload_dir, filename)
+    
+    # Save file
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    # Update database with relative path
+    doctor.profile_image = f"/static/images/doctors/{filename}"
+    db.commit()
+    db.refresh(doctor)
+    
+    return {"message": "Image uploaded successfully", "profile_image": doctor.profile_image}
+
+@router.get("/doctors/{doctor_id}/availability")
+def get_doctor_availability(doctor_id: int, db: Session = Depends(get_db)):
+    doctor = db.query(Doctor).filter(Doctor.id == doctor_id).first()
+    if not doctor:
+        raise HTTPException(status_code=404, detail="Doctor not found")
+    availability = db.query(DoctorAvailability).filter(DoctorAvailability.doctor_id == doctor_id).all()
+    return availability
 
 # -------------------- APPOINTMENT ENDPOINTS --------------------
 @router.get("/appointments/", response_model=List[AppointmentResponse])

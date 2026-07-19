@@ -31,7 +31,6 @@ export default function Appointments() {
       <h1 className="font-headline-lg text-headline-lg mb-2">Patient Appointments</h1>
       <p className="text-on-surface-variant font-body-md mb-8">Search and manage patient medical visits.</p>
 
-      {/* Search */}
       <div className="bg-surface-container-lowest border border-outline-variant rounded-xl p-6 mb-12">
         <label className="block font-label-md text-label-md text-primary mb-4">SEARCH PATIENT RECORDS</label>
         <div className="relative flex flex-col md:flex-row gap-4">
@@ -54,7 +53,6 @@ export default function Appointments() {
         <p className="text-sm text-on-surface-variant mt-2">Valid patient IDs: 1-10</p>
       </div>
 
-      {/* Results */}
       {loading && <p className="text-center">Loading appointments...</p>}
       {error && <p className="text-error text-center">{error}</p>}
       {!loading && !error && appointments.length === 0 && (

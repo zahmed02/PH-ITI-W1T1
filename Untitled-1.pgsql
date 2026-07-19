@@ -1,1 +1,0 @@
-SELECT * FROM appointments WHERE id = 26;
