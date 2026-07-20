@@ -2,11 +2,14 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from backend.models import Appointment, DoctorAvailability
 
+def parse_iso_date(date_str: str):
+    """Convert ISO date string to datetime.date, or return None."""
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d").date()
+    except:
+        return None
+
 def get_doctor_working_hours(doctor_id: int, day_of_week: int, db: Session):
-    """
-    Returns (start_time, end_time) for the given doctor on that day_of_week,
-    or None if the doctor is not working that day.
-    """
     avail = db.query(DoctorAvailability).filter(
         DoctorAvailability.doctor_id == doctor_id,
         DoctorAvailability.day_of_week == day_of_week
@@ -15,36 +18,62 @@ def get_doctor_working_hours(doctor_id: int, day_of_week: int, db: Session):
         return None
     return (avail.start_time, avail.end_time)
 
-def get_available_slots(
-    doctor_id: int,
-    date: datetime,
-    db: Session,
-    preferred_time_range: tuple[int, int] = None,
-    slot_duration: int = 60
-) -> list[str]:
+def get_weekly_availability(doctor_id: int, db: Session, slot_duration: int = 60):
+    today = datetime.now().date()
+    monday = today - timedelta(days=today.weekday())
+    week_days = [monday + timedelta(days=i) for i in range(7)]
+    result = {}
+
+    for date in week_days:
+        day_name = date.strftime("%A")
+        day_of_week = date.weekday()
+        working = get_doctor_working_hours(doctor_id, day_of_week, db)
+        if not working:
+            result[day_name] = []
+            continue
+        start_time, end_time = working
+        start_dt = datetime.combine(date, start_time)
+        end_dt = datetime.combine(date, end_time)
+
+        slots = []
+        current = start_dt
+        while current + timedelta(minutes=slot_duration) <= end_dt:
+            slots.append(current)
+            current += timedelta(minutes=slot_duration)
+
+        booked = db.query(Appointment).filter(
+            Appointment.doctor_id == doctor_id,
+            Appointment.appointment_time >= start_dt,
+            Appointment.appointment_time < end_dt
+        ).all()
+        booked_times = [app.appointment_time for app in booked]
+
+        free = []
+        for slot in slots:
+            if slot not in booked_times:
+                free.append(slot.strftime("%I:%M %p"))
+        result[day_name] = free
+    return result
+
+def get_available_slots(doctor_id: int, date_input, db: Session, preferred_time_range: tuple = None, slot_duration: int = 60):
     """
-    Return available time slots (formatted strings) for a doctor on a given date.
-    Uses the doctor's actual working hours from doctor_availability.
-    If preferred_time_range (start_hour, end_hour) is given, restrict slots to that window.
+    date_input can be a datetime.date, datetime.datetime, or ISO string (YYYY-MM-DD).
     """
-    if not date:
+    if isinstance(date_input, str):
+        date = parse_iso_date(date_input)
+        if not date:
+            return []
+    else:
+        date = date_input.date() if hasattr(date_input, 'date') else date_input
+
+    day_of_week = date.weekday()
+    working = get_doctor_working_hours(doctor_id, day_of_week, db)
+    if not working:
         return []
-    
-    day_of_week = date.weekday()  # Monday=0, Sunday=6
-    working_hours = get_doctor_working_hours(doctor_id, day_of_week, db)
-    if not working_hours:
-        return []  # doctor not working that day
-    
-    start_time, end_time = working_hours
-    # Convert to datetime objects on the given date
+    start_time, end_time = working
     start_dt = datetime.combine(date, start_time)
     end_dt = datetime.combine(date, end_time)
-    
-    # If date is in the past, return empty
-    if start_dt < datetime.now().replace(hour=0, minute=0, second=0, microsecond=0):
-        return []
-    
-    # Apply preferred time range if given
+
     if preferred_time_range:
         pref_start_hour, pref_end_hour = preferred_time_range
         pref_start = start_dt.replace(hour=pref_start_hour, minute=0)
@@ -54,25 +83,22 @@ def get_available_slots(
         if effective_start >= effective_end:
             return []
         start_dt, end_dt = effective_start, effective_end
-    
-    # Generate slots
+
     slots = []
     current = start_dt
     while current + timedelta(minutes=slot_duration) <= end_dt:
         slots.append(current)
         current += timedelta(minutes=slot_duration)
-    
-    # Get booked appointments for that doctor on that day
+
     booked = db.query(Appointment).filter(
         Appointment.doctor_id == doctor_id,
         Appointment.appointment_time >= start_dt,
         Appointment.appointment_time < end_dt
     ).all()
     booked_times = [app.appointment_time for app in booked]
-    
+
     free = []
     for slot in slots:
         if slot not in booked_times:
             free.append(slot.strftime("%I:%M %p"))
-    
     return free

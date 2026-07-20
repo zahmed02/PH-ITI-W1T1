@@ -74,12 +74,23 @@ export default function CalendarPage() {
 
       {selectedDoctor ? (
         <>
-          <Calendar doctorId={selectedDoctor} weekStart={weekStart} />
-          <div className="mt-3 flex flex-wrap gap-4 text-xs">
-            <span className="flex items-center gap-1"><span className="w-3 h-3 bg-secondary-container border"></span> Available</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-3 bg-tertiary-container/20 border-l-2 border-tertiary"></span> Booked</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-3 bg-surface-container-highest/50 border"></span> Not Working</span>
+          {/* ✅ LEGEND – Moved ABOVE the calendar */}
+          <div className="flex flex-wrap gap-4 text-xs mb-3 p-3 bg-surface-container-low rounded-lg border border-outline-variant">
+            <span className="flex items-center gap-2">
+              <span className="inline-block w-4 h-4 bg-secondary-container border border-secondary rounded"></span>
+              Available
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="inline-block w-4 h-4 bg-tertiary-container/20 border-l-2 border-tertiary rounded"></span>
+              Booked
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="inline-block w-4 h-4 bg-surface-container-highest/50 border border-outline-variant rounded"></span>
+              Not Working
+            </span>
           </div>
+
+          <Calendar doctorId={selectedDoctor} weekStart={weekStart} />
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
             {[
