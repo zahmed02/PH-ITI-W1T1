@@ -10,9 +10,14 @@ def parse_iso_date(date_str: str):
         return None
 
 def get_doctor_working_hours(doctor_id: int, day_of_week: int, db: Session):
+    """
+    day_of_week: Python's weekday (0=Monday, 6=Sunday)
+    Database uses 1=Monday, 2=Tuesday, ..., 7=Sunday.
+    """
+    db_day = day_of_week + 1  # Convert to database format
     avail = db.query(DoctorAvailability).filter(
         DoctorAvailability.doctor_id == doctor_id,
-        DoctorAvailability.day_of_week == day_of_week
+        DoctorAvailability.day_of_week == db_day
     ).first()
     if not avail:
         return None
