@@ -85,3 +85,14 @@ class ReviewResponse(ReviewBase):
 
 # Forward references
 DoctorWithDetails.model_rebuild()
+
+
+# -------------------- CHAT SCHEMAS (new) --------------------
+class ChatRequest(BaseModel):
+    patient_id: int
+    message: str
+    session_id: Optional[str] = None
+
+class ChatResponse(BaseModel):
+    response: str
+    session_id: str

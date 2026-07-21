@@ -60,13 +60,17 @@ class Review(Base):
     doctor = relationship("Doctor", back_populates="reviews")
     patient = relationship("Patient", back_populates="reviews")
 
-# NEW: DoctorAvailability model
 class DoctorAvailability(Base):
     __tablename__ = "doctor_availability"
 
     id = Column(Integer, primary_key=True, index=True)
     doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
-    day_of_week = Column(Integer, nullable=False)  # 0=Monday, 6=Sunday
+    # IMPORTANT: matches the DB's CHECK (day_of_week BETWEEN 0 AND 6) and the
+    # actual seeded data (1..5 = Monday..Friday), which means the convention
+    # here is 0=Sunday, 1=Monday, ..., 6=Saturday - NOT Python's weekday().
+    # See backend/availability.py:python_weekday_to_db_day() for the conversion
+    # used whenever this column is queried from Python's date.weekday().
+    day_of_week = Column(Integer, nullable=False)
     start_time = Column(Time, nullable=False)
     end_time = Column(Time, nullable=False)
 
