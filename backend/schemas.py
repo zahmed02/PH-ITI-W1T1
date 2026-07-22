@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from datetime import datetime
 from typing import Optional, List
 
@@ -87,7 +87,7 @@ class ReviewResponse(ReviewBase):
 DoctorWithDetails.model_rebuild()
 
 
-# -------------------- CHAT SCHEMAS (new) --------------------
+# -------------------- CHAT SCHEMAS --------------------
 class ChatRequest(BaseModel):
     patient_id: int
     message: str
@@ -96,3 +96,42 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     session_id: str
+
+
+# -------------------- AUTH SCHEMAS (new) --------------------
+class UserRegister(BaseModel):
+    username: str
+    password: str
+
+    @field_validator("username")
+    @classmethod
+    def username_not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if len(v) < 3:
+            raise ValueError("Username must be at least 3 characters.")
+        return v
+
+    @field_validator("password")
+    @classmethod
+    def password_min_length(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters.")
+        return v
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+class UserOut(BaseModel):
+    id: int
+    username: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user_id: int
+    username: str

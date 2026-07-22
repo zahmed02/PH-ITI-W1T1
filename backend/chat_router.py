@@ -140,10 +140,41 @@ def _tool_search_doctors(db: Session, specialty: Optional[str] = None, name: Opt
         query = query.filter(
             (Doctor.first_name.ilike(f"%{clean}%")) | (Doctor.last_name.ilike(f"%{clean}%"))
         )
-    doctors = query.limit(15).all()
+
+    # Compute the true total and the per-specialty breakdown with real
+    # aggregate queries, rather than len()'ing a possibly-truncated list.
+    # Small models are unreliable at counting/summarizing 10+ items from a
+    # raw list - they drop entries and miscount even when the data handed
+    # to them was correct. Precomputing the numbers here means the model
+    # only has to repeat a value, never count one itself.
+    total_count = query.count()
+
+    breakdown_query = db.query(Doctor.specialty, func.count(Doctor.id))
+    if specialty:
+        breakdown_query = breakdown_query.filter(Doctor.specialty.ilike(f"%{specialty}%"))
+    if name:
+        clean = clean_doctor_name(name)
+        breakdown_query = breakdown_query.filter(
+            (Doctor.first_name.ilike(f"%{clean}%")) | (Doctor.last_name.ilike(f"%{clean}%"))
+        )
+    doctor_count_by_specialty = dict(breakdown_query.group_by(Doctor.specialty).all())
+
+    doctors = query.order_by(Doctor.specialty, Doctor.last_name).limit(50).all()
     if not doctors:
-        return {"found": False, "doctors": []}
-    return {"found": True, "doctors": [_serialize_doctor(d, db) for d in doctors]}
+        return {"found": False, "total_count": 0, "specialties": [], "doctor_count_by_specialty": {}, "doctors": []}
+
+    return {
+        "found": True,
+        "total_count": total_count,
+        "specialties": sorted(doctor_count_by_specialty.keys()),
+        "doctor_count_by_specialty": doctor_count_by_specialty,
+        "doctors": [_serialize_doctor(d, db) for d in doctors],
+        "note": (
+            "total_count, specialties, and doctor_count_by_specialty above are the "
+            "authoritative counts - use them directly for any 'how many' or 'which "
+            "departments' question instead of counting the doctors list yourself."
+        ),
+    }
 
 
 def _ambiguous_result(doctor_name: str, matches: list) -> dict:
@@ -271,6 +302,13 @@ use them for any factual claim about doctors, specialties, availability,
 ratings, reviews, or appointments - NEVER invent or guess this information.
 If a tool returns no results, tell the user honestly instead of making
 something up.
+
+When search_doctors returns "total_count", "specialties", or
+"doctor_count_by_specialty" fields, use those numbers directly for any
+"how many doctors" or "which departments" question. Do NOT count the
+entries in the "doctors" list yourself, and do NOT recompute these numbers -
+long lists are easy to miscount, so always defer to the precomputed
+fields instead.
 
 Before calling book_appointment, you must have the user's explicit
 confirmation of the doctor, the exact date, and the exact time. If anything

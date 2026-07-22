@@ -65,13 +65,31 @@ class DoctorAvailability(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
-    # IMPORTANT: matches the DB's CHECK (day_of_week BETWEEN 0 AND 6) and the
-    # actual seeded data (1..5 = Monday..Friday), which means the convention
-    # here is 0=Sunday, 1=Monday, ..., 6=Saturday - NOT Python's weekday().
-    # See backend/availability.py:python_weekday_to_db_day() for the conversion
+    # 0=Sunday ... 6=Saturday (matches the CHECK(0..6) constraint and the
+    # actual seeded data). See backend/availability.py for the conversion
     # used whenever this column is queried from Python's date.weekday().
     day_of_week = Column(Integer, nullable=False)
     start_time = Column(Time, nullable=False)
     end_time = Column(Time, nullable=False)
 
     doctor = relationship("Doctor", back_populates="availability")
+
+
+class User(Base):
+    """
+    Login accounts for the portal. Separate from Patient - a User is who
+    logs in to the website; a Patient is a clinical record the chat/booking
+    system operates on. Wiring a User to a specific Patient record is a
+    reasonable next step, but keeping them separate for now avoids forcing
+    every login to already have a patient profile.
+    """
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(50), unique=True, nullable=False, index=True)
+    hashed_password = Column(String(255), nullable=False)
+    # Incremented on logout. A JWT is only valid if its embedded "tv" claim
+    # matches the current value here - this is what makes logout actually
+    # revoke the token server-side instead of merely deleting it client-side.
+    token_version = Column(Integer, nullable=False, default=0)
+    created_at = Column(TIMESTAMP, server_default=func.now())

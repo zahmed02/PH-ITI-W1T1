@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.database import engine, Base
 from backend.routes import router
 from backend.chat_router import router as chat_router
+from backend.auth import router as auth_router
 import os
 
 # Create tables
@@ -28,6 +29,7 @@ else:
 # Include routes
 app.include_router(router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
+app.include_router(auth_router, prefix="/api")
 
 @app.get("/")
 def root():

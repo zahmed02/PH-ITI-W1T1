@@ -17,3 +17,5 @@ python-multipart
 groq
 sqlalchemy
 psycopg2-binary
+pyjwt
+bcrypt

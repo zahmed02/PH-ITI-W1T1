@@ -1,7 +1,8 @@
 // src/components/Layout.tsx
-import { NavLink, useLocation, useOutlet } from 'react-router-dom';
+import { NavLink, useLocation, useOutlet, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import BackgroundSlideshow from './BackgroundSlideshow';
+import { useAuth } from '../auth/AuthContext';
 
 // Page transition variants – smooth transform
 const pageVariants = {
@@ -12,12 +13,22 @@ const pageVariants = {
 
 const pageTransition = {
   duration: 0.35,
-  ease: 'easeInOut',
+  ease: 'easeInOut' as const,
 };
 
 export default function Layout() {
   const location = useLocation();
   const outlet = useOutlet(); // Get the current outlet element
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    await logout();
+    // Not strictly required - ProtectedRoute will redirect on its own once
+    // `isAuthenticated` flips to false - but navigating explicitly avoids
+    // a flash of the current protected page before the redirect kicks in.
+    navigate('/login', { replace: true });
+  };
 
   return (
     <div className="min-h-screen relative overflow-hidden">
@@ -75,13 +86,24 @@ export default function Layout() {
           >
             notifications
           </motion.span>
-          <motion.span
-            className="material-symbols-outlined text-on-surface-variant cursor-pointer"
-            whileHover={{ scale: 1.2, rotate: -10, color: '#00478d' }}
-            transition={{ type: 'spring', stiffness: 300 }}
-          >
-            account_circle
-          </motion.span>
+
+          {/* Account / logout */}
+          <div className="flex items-center gap-2">
+            {user && (
+              <span className="hidden sm:block text-sm text-on-surface-variant">
+                {user.username}
+              </span>
+            )}
+            <motion.button
+              onClick={handleLogout}
+              title="Log out"
+              className="material-symbols-outlined text-on-surface-variant cursor-pointer"
+              whileHover={{ scale: 1.2, rotate: -10, color: '#00478d' }}
+              transition={{ type: 'spring', stiffness: 300 }}
+            >
+              logout
+            </motion.button>
+          </div>
         </div>
       </motion.header>
 

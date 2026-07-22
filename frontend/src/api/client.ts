@@ -1,10 +1,33 @@
-// frontend/src/api/client.ts
 import axios from 'axios';
+import { getStoredAuth, clearStoredAuth } from '../auth/authStorage';
 
 const api = axios.create({
   baseURL: '/api',
   headers: { 'Content-Type': 'application/json' },
 });
+
+// Attach the bearer token (if any) to every outgoing request.
+api.interceptors.request.use((config) => {
+  const auth = getStoredAuth();
+  if (auth?.token) {
+    config.headers = config.headers ?? {};
+    config.headers.Authorization = `Bearer ${auth.token}`;
+  }
+  return config;
+});
+
+// If the backend ever rejects a token (expired, or revoked via logout on
+// another tab/device), clear it locally so the UI reflects "logged out"
+// instead of silently failing requests forever.
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401) {
+      clearStoredAuth();
+    }
+    return Promise.reject(error);
+  }
+);
 
 // Doctors
 export const getDoctors = (params?: { specialty?: string; min_experience?: number; min_rating?: number }) =>
@@ -43,3 +66,5 @@ export const uploadDoctorImage = (doctorId: number, file: File) => {
     headers: { 'Content-Type': 'multipart/form-data' },
   }).then(res => res.data);
 };
+
+export default api;

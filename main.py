@@ -1,4 +1,3 @@
-# main.py
 from file_loader import load_file
 from vector_store import VectorStore
 from llm_interface import ask_flant5
