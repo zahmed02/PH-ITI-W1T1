@@ -19,3 +19,4 @@ sqlalchemy
 psycopg2-binary
 pyjwt
 bcrypt
+email-validator

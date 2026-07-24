@@ -7,22 +7,36 @@ import shutil
 from datetime import datetime
 
 from backend.database import get_db
-from backend.models import Doctor, Patient, DoctorAvailability, Appointment, Review
+from backend.models import Doctor, Patient, DoctorAvailability, Appointment, Review, User
+from backend.availability import get_schedule_preview, parse_iso_date
 from backend.schemas import (
     DoctorResponse, DoctorWithDetails,
     AppointmentCreate, AppointmentResponse,
     ReviewCreate, ReviewResponse
 )
+from backend.auth import (
+    get_current_user,
+    require_admin,
+    require_doctor_or_admin,
+    ensure_can_access_doctor_data,
+    ensure_can_access_patient_data,
+)
 
 router = APIRouter()
 
 # -------------------- DOCTOR ENDPOINTS --------------------
+# Public profile info (name, specialty, experience, rating, bio) is
+# visible to any logged-in role - patients need this to browse/book,
+# doctors need it to see colleagues for referrals, admins need it too.
+# "Logged in" is the only bar here; no role restriction.
+
 @router.get("/doctors/", response_model=List[DoctorResponse])
 def get_all_doctors(
     skip: int = 0,
     limit: int = 100,
     specialty: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     query = db.query(Doctor)
     if specialty:
@@ -30,7 +44,7 @@ def get_all_doctors(
     return query.offset(skip).limit(limit).all()
 
 @router.get("/doctors/{doctor_id}", response_model=DoctorWithDetails)
-def get_doctor(doctor_id: int, db: Session = Depends(get_db)):
+def get_doctor(doctor_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     doctor = db.query(Doctor).filter(Doctor.id == doctor_id).first()
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor not found")
@@ -49,7 +63,8 @@ def search_doctors(
     specialty: Optional[str] = Query(None),
     min_experience: Optional[int] = Query(None),
     min_rating: Optional[float] = Query(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     query = db.query(Doctor)
     if specialty:
@@ -73,8 +88,12 @@ def search_doctors(
 async def upload_doctor_image(
     doctor_id: int,
     file: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_doctor_or_admin),
 ):
+    # A doctor may only update their OWN photo; admin may update any.
+    ensure_can_access_doctor_data(current_user, doctor_id)
+
     doctor = db.query(Doctor).filter(Doctor.id == doctor_id).first()
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor not found")
@@ -104,34 +123,78 @@ async def upload_doctor_image(
     return {"message": "Image uploaded successfully", "profile_image": doctor.profile_image}
 
 @router.get("/doctors/{doctor_id}/availability")
-def get_doctor_availability(doctor_id: int, db: Session = Depends(get_db)):
+def get_doctor_availability(doctor_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # Public (any logged-in role) - patients need this to book, doctors/
+    # admins need it too. This only returns working-hours slots, not
+    # which specific patient holds a given slot.
     doctor = db.query(Doctor).filter(Doctor.id == doctor_id).first()
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor not found")
     availability = db.query(DoctorAvailability).filter(DoctorAvailability.doctor_id == doctor_id).all()
     return availability
 
+@router.get("/doctors/{doctor_id}/schedule-preview")
+def get_doctor_schedule_preview(
+    doctor_id: int,
+    week_start: str = Query(..., description="ISO date (YYYY-MM-DD) of the first day to show"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Privacy-safe booking view: returns which slots are available/booked
+    per day, WITHOUT ever revealing which patient holds a booked slot.
+    This is what the patient-facing booking calendar should call -
+    GET /appointments/doctor/{id} (which does include real patient names)
+    is restricted to the doctor themselves or an admin, on purpose.
+    """
+    doctor = db.query(Doctor).filter(Doctor.id == doctor_id).first()
+    if not doctor:
+        raise HTTPException(status_code=404, detail="Doctor not found")
+
+    start_date = parse_iso_date(week_start)
+    if not start_date:
+        raise HTTPException(status_code=400, detail="week_start must be an ISO date (YYYY-MM-DD).")
+
+    return get_schedule_preview(doctor_id, start_date, db)
+
 # -------------------- APPOINTMENT ENDPOINTS --------------------
+
 @router.get("/appointments/", response_model=List[AppointmentResponse])
-def get_all_appointments(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def get_all_appointments(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
+    # Hospital-wide appointment list - admin only.
     return db.query(Appointment).offset(skip).limit(limit).all()
 
 @router.get("/appointments/doctor/{doctor_id}", response_model=List[AppointmentResponse])
-def get_appointments_by_doctor(doctor_id: int, db: Session = Depends(get_db)):
+def get_appointments_by_doctor(doctor_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # A doctor may only see their OWN appointments; admin may see any doctor's.
+    ensure_can_access_doctor_data(current_user, doctor_id)
+
     doctor = db.query(Doctor).filter(Doctor.id == doctor_id).first()
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor not found")
     return db.query(Appointment).filter(Appointment.doctor_id == doctor_id).all()
 
 @router.get("/appointments/patient/{patient_id}", response_model=List[AppointmentResponse])
-def get_appointments_by_patient(patient_id: int, db: Session = Depends(get_db)):
+def get_appointments_by_patient(patient_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # A patient may only see their OWN appointments; admin may see any patient's.
+    ensure_can_access_patient_data(current_user, patient_id)
+
     patient = db.query(Patient).filter(Patient.id == patient_id).first()
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
     return db.query(Appointment).filter(Appointment.patient_id == patient_id).all()
 
 @router.post("/appointments/", response_model=AppointmentResponse)
-def create_appointment(appointment: AppointmentCreate, db: Session = Depends(get_db)):
+def create_appointment(appointment: AppointmentCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # A patient may only book for THEMSELVES; admin may book for anyone.
+    # (Doctors don't book through this raw endpoint - the AI assistant/
+    # calendar flows are the intended booking paths.)
+    if current_user.role == "patient":
+        if current_user.patient_id != appointment.patient_id:
+            raise HTTPException(status_code=403, detail="You can only book appointments for yourself.")
+    elif current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="You do not have permission to book appointments.")
+
     doctor = db.query(Doctor).filter(Doctor.id == appointment.doctor_id).first()
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor not found")
@@ -146,19 +209,33 @@ def create_appointment(appointment: AppointmentCreate, db: Session = Depends(get
     return db_appointment
 
 # -------------------- REVIEW ENDPOINTS --------------------
+# Reviews are public reading material (patients browsing doctors see
+# them), so read access just requires being logged in, same as the
+# doctor browse endpoints above.
+
 @router.get("/reviews/", response_model=List[ReviewResponse])
-def get_all_reviews(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def get_all_reviews(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return db.query(Review).offset(skip).limit(limit).all()
 
 @router.get("/reviews/doctor/{doctor_id}", response_model=List[ReviewResponse])
-def get_reviews_by_doctor(doctor_id: int, db: Session = Depends(get_db)):
+def get_reviews_by_doctor(doctor_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     doctor = db.query(Doctor).filter(Doctor.id == doctor_id).first()
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor not found")
     return db.query(Review).filter(Review.doctor_id == doctor_id).all()
 
 @router.post("/reviews/", response_model=ReviewResponse)
-def create_review(review: ReviewCreate, db: Session = Depends(get_db)):
+def create_review(review: ReviewCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # A patient may only leave a review AS THEMSELVES; admin may on behalf
+    # of any patient (e.g. entering a phone-in review).
+    # NOTE: "must have had a completed appointment with this doctor first"
+    # is a deliberately deferred business rule - not enforced yet.
+    if current_user.role == "patient":
+        if current_user.patient_id != review.patient_id:
+            raise HTTPException(status_code=403, detail="You can only submit reviews as yourself.")
+    elif current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="You do not have permission to submit reviews.")
+
     doctor = db.query(Doctor).filter(Doctor.id == review.doctor_id).first()
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor not found")

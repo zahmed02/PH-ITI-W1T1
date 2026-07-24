@@ -1,3 +1,4 @@
+// frontend/src/pages/Register.tsx
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -6,6 +7,10 @@ import { useAuth } from '../auth/AuthContext';
 import BackgroundSlideshow from '../components/BackgroundSlideshow';
 
 export default function Register() {
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -18,6 +23,10 @@ export default function Register() {
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!firstName.trim() || !lastName.trim() || !email.trim()) {
+      setError('Please fill in your name and email.');
+      return;
+    }
     if (!username.trim() || !password) {
       setError('Please choose a username and password.');
       return;
@@ -38,7 +47,17 @@ export default function Register() {
     setSubmitting(true);
     setError(null);
     try {
-      await register(username.trim(), password); // logs the new account straight in
+      // Registering as a patient also creates the linked Patient record,
+      // so once logged in, "my appointments" etc. resolve automatically -
+      // no more manually typing a patient ID anywhere in the app.
+      await register({
+        username: username.trim(),
+        password,
+        first_name: firstName.trim(),
+        last_name: lastName.trim(),
+        email: email.trim(),
+        phone: phone.trim() || undefined,
+      });
       setShowWelcome(true);
     } catch (err: any) {
       setError(err?.response?.data?.detail || 'Could not create your account. Please try again.');
@@ -47,7 +66,7 @@ export default function Register() {
   };
 
   return (
-    <div className="min-h-screen relative flex items-center justify-center overflow-hidden px-4">
+    <div className="min-h-screen relative flex items-center justify-center overflow-hidden px-4 py-8">
       <BackgroundSlideshow />
 
       <motion.div
@@ -63,6 +82,60 @@ export default function Register() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-on-surface-variant block mb-1">First Name</label>
+              <input
+                type="text"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-lg border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary outline-none bg-surface-bright"
+                placeholder="Jane"
+                autoComplete="given-name"
+                disabled={submitting}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-on-surface-variant block mb-1">Last Name</label>
+              <input
+                type="text"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-lg border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary outline-none bg-surface-bright"
+                placeholder="Doe"
+                autoComplete="family-name"
+                disabled={submitting}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-on-surface-variant block mb-1">Email</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full px-4 py-2.5 rounded-lg border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary outline-none bg-surface-bright"
+              placeholder="you@example.com"
+              autoComplete="email"
+              disabled={submitting}
+            />
+            <p className="text-xs text-on-surface-variant/70 mt-1">Appointment confirmations will be sent here.</p>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-on-surface-variant block mb-1">Phone (optional)</label>
+            <input
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              className="w-full px-4 py-2.5 rounded-lg border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary outline-none bg-surface-bright"
+              placeholder="555-0100"
+              autoComplete="tel"
+              disabled={submitting}
+            />
+          </div>
+
           <div>
             <label className="text-xs font-medium text-on-surface-variant block mb-1">Username</label>
             <input
@@ -139,7 +212,7 @@ export default function Register() {
               <span className="material-symbols-outlined text-6xl mb-3" style={{ fontVariationSettings: "'FILL' 1" }}>
                 celebration
               </span>
-              <h2 className="text-2xl font-bold">Welcome to Stellaris, {username}!</h2>
+              <h2 className="text-2xl font-bold">Welcome to Stellaris, {firstName}!</h2>
               <p className="text-white/80 mt-1">Setting up your portal...</p>
             </motion.div>
           </motion.div>

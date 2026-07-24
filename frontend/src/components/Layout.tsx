@@ -16,6 +16,12 @@ const pageTransition = {
   ease: 'easeInOut' as const,
 };
 
+interface NavItem {
+  to: string;
+  label: string;
+  icon: string;
+}
+
 export default function Layout() {
   const location = useLocation();
   const outlet = useOutlet(); // Get the current outlet element
@@ -29,6 +35,31 @@ export default function Layout() {
     // a flash of the current protected page before the redirect kicks in.
     navigate('/login', { replace: true });
   };
+
+  // Navigation differs per role:
+  // - patient: AI Assistant (booking chat), Specialists (browse/pick a
+  //   doctor), Calendar (their own upcoming appointments / booking view).
+  // - doctor: no AI Assistant (booking chat isn't available to doctor
+  //   logins - see backend/chat_router.py), Specialists (browse
+  //   colleagues), "My Schedule" (their own real calendar with patient
+  //   names, not the patient-facing free/busy view).
+  // - admin: everything, plus a dedicated Admin Panel for account
+  //   management.
+  const role = user?.role;
+  const navItems: NavItem[] = [];
+
+  if (role === 'patient' || role === 'admin') {
+    navItems.push({ to: '/', label: 'AI Assistant', icon: 'smart_toy' });
+  }
+  navItems.push({ to: '/doctors', label: 'Specialists', icon: 'medical_services' });
+  navItems.push({
+    to: '/calendar',
+    label: role === 'doctor' ? 'My Schedule' : role === 'admin' ? 'Calendar' : 'My Appointments',
+    icon: 'calendar_month',
+  });
+  if (role === 'admin') {
+    navItems.push({ to: '/admin', label: 'Admin Panel', icon: 'admin_panel_settings' });
+  }
 
   return (
     <div className="min-h-screen relative overflow-hidden">
@@ -52,19 +83,15 @@ export default function Layout() {
           <span className="text-lg font-bold text-primary hidden sm:block">Stellaris General Hospital</span>
         </div>
         <nav className="hidden md:flex items-center gap-6">
-          {[
-            { path: '/', label: 'AI Assistant' },
-            { path: '/doctors', label: 'Find a Doctor' },
-            { path: '/calendar', label: 'Schedule' },
-          ].map((item, i) => (
+          {navItems.map((item, i) => (
             <motion.div
-              key={item.path}
+              key={item.to}
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.1 + i * 0.05 }}
             >
               <NavLink
-                to={item.path}
+                to={item.to}
                 className={({ isActive }) =>
                   `text-sm font-medium transition-all duration-200 ${
                     isActive
@@ -90,8 +117,9 @@ export default function Layout() {
           {/* Account / logout */}
           <div className="flex items-center gap-2">
             {user && (
-              <span className="hidden sm:block text-sm text-on-surface-variant">
-                {user.username}
+              <span className="hidden sm:flex flex-col items-end leading-tight">
+                <span className="text-sm text-on-surface-variant">{user.username}</span>
+                <span className="text-[10px] uppercase tracking-wider text-primary/70 font-semibold">{user.role}</span>
               </span>
             )}
             <motion.button
@@ -119,11 +147,7 @@ export default function Layout() {
           <p className="text-xs text-on-surface-variant">Medical Portal</p>
         </div>
         <nav className="flex-1 space-y-1">
-          {[
-            { to: '/', label: 'AI Assistant', icon: 'smart_toy' },
-            { to: '/doctors', label: 'Specialists', icon: 'medical_services' },
-            { to: '/calendar', label: 'Calendar', icon: 'calendar_month' },
-          ].map((item, i) => (
+          {navItems.map((item, i) => (
             <motion.div
               key={item.to}
               initial={{ opacity: 0, x: -20 }}
@@ -184,7 +208,7 @@ export default function Layout() {
         transition={{ duration: 0.4, delay: 0.2 }}
       >
         <div className="bg-white/70 backdrop-blur-sm rounded-xl p-4 md:p-6 shadow-sm border border-outline-variant/30 relative overflow-hidden">
-          {/* ✅ Use AnimatePresence with mode="wait" and the outlet */}
+          {/* Use AnimatePresence with mode="wait" and the outlet */}
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}
@@ -208,11 +232,7 @@ export default function Layout() {
         animate={{ y: 0, opacity: 1 }}
         transition={{ type: 'spring', stiffness: 100, damping: 15 }}
       >
-        {[
-          { to: '/', label: 'AI Chat', icon: 'chat' },
-          { to: '/doctors', label: 'Doctors', icon: 'medical_services' },
-          { to: '/calendar', label: 'Calendar', icon: 'calendar_month' },
-        ].map((item) => (
+        {navItems.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}

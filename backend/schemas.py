@@ -1,6 +1,8 @@
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, EmailStr
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Literal
+
+Role = Literal["admin", "doctor", "patient"]
 
 # Doctor schemas
 class DoctorBase(BaseModel):
@@ -89,7 +91,11 @@ DoctorWithDetails.model_rebuild()
 
 # -------------------- CHAT SCHEMAS --------------------
 class ChatRequest(BaseModel):
-    patient_id: int
+    # patient_id is now OPTIONAL and, for role="patient" callers, is IGNORED
+    # in favor of the patient linked to their login token - see
+    # backend/chat_router.py. It's only actually used when an admin is
+    # chatting on a patient's behalf.
+    patient_id: Optional[int] = None
     message: str
     session_id: Optional[str] = None
 
@@ -98,40 +104,86 @@ class ChatResponse(BaseModel):
     session_id: str
 
 
-# -------------------- AUTH SCHEMAS (new) --------------------
-class UserRegister(BaseModel):
+# -------------------- AUTH SCHEMAS --------------------
+
+def _validate_username(v: str) -> str:
+    v = v.strip()
+    if len(v) < 3:
+        raise ValueError("Username must be at least 3 characters.")
+    return v
+
+
+def _validate_password(v: str) -> str:
+    if len(v) < 8:
+        raise ValueError("Password must be at least 8 characters.")
+    return v
+
+
+class PatientRegister(BaseModel):
+    """
+    Public self-registration - always creates a role="patient" account,
+    plus the linked Patient record it needs (name/email/phone), atomically.
+    There is deliberately no public way to register as "doctor" or "admin" -
+    those accounts are created by an existing admin only (see
+    AdminCreateDoctorRequest / AdminCreateAdminRequest below), otherwise
+    anyone could sign up claiming to be a doctor or admin.
+    """
     username: str
     password: str
+    first_name: str
+    last_name: str
+    email: EmailStr
+    phone: Optional[str] = None
 
-    @field_validator("username")
-    @classmethod
-    def username_not_blank(cls, v: str) -> str:
-        v = v.strip()
-        if len(v) < 3:
-            raise ValueError("Username must be at least 3 characters.")
-        return v
+    _username_check = field_validator("username")(classmethod(lambda cls, v: _validate_username(v)))
+    _password_check = field_validator("password")(classmethod(lambda cls, v: _validate_password(v)))
 
-    @field_validator("password")
-    @classmethod
-    def password_min_length(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters.")
-        return v
 
 class UserLogin(BaseModel):
     username: str
     password: str
 
+
 class UserOut(BaseModel):
     id: int
     username: str
+    role: Role
+    doctor_id: Optional[int] = None
+    patient_id: Optional[int] = None
     created_at: datetime
 
     class Config:
         from_attributes = True
+
 
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user_id: int
     username: str
+    role: Role
+    doctor_id: Optional[int] = None
+    patient_id: Optional[int] = None
+
+
+class AdminCreateDoctorRequest(BaseModel):
+    """Admin-only: creates a Doctor record and its login account together."""
+    username: str
+    password: str
+    first_name: str
+    last_name: str
+    specialty: str
+    years_of_experience: int
+    bio: Optional[str] = None
+
+    _username_check = field_validator("username")(classmethod(lambda cls, v: _validate_username(v)))
+    _password_check = field_validator("password")(classmethod(lambda cls, v: _validate_password(v)))
+
+
+class AdminCreateAdminRequest(BaseModel):
+    """Admin-only: creates another plain admin login (no doctor/patient link)."""
+    username: str
+    password: str
+
+    _username_check = field_validator("username")(classmethod(lambda cls, v: _validate_username(v)))
+    _password_check = field_validator("password")(classmethod(lambda cls, v: _validate_password(v)))

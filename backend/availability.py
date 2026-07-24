@@ -120,3 +120,58 @@ def get_available_slots(doctor_id: int, date_input, db: Session,
 
     free_slots = _compute_free_slots(doctor_id, date, db, slot_duration, preferred_time_range)
     return [slot.strftime("%I:%M %p") for slot in free_slots]
+
+
+def get_schedule_preview(doctor_id: int, week_start_date, db: Session,
+                          num_days: int = 5, slot_duration: int = 60) -> dict:
+    """
+    Returns a full grid of slot statuses for booking purposes - WITHOUT
+    ever revealing which patient holds a booked slot. Each slot is one of:
+    "available", "booked", or "not-working".
+
+    This is deliberately separate from the doctor's/admin's real schedule
+    view (which does show real patient names via GET /appointments/doctor/
+    {id}) - that endpoint is restricted to the doctor themselves or an
+    admin. A patient browsing to book an appointment should see "this slot
+    is taken" but never WHO took it.
+    """
+    result = {}
+    for i in range(num_days):
+        date = week_start_date + timedelta(days=i)
+        day_of_week = date.weekday()
+        working = get_doctor_working_hours(doctor_id, day_of_week, db)
+
+        day_slots = []
+        if working:
+            start_time, end_time = working
+            start_dt = datetime.combine(date, start_time)
+            end_dt = datetime.combine(date, end_time)
+
+            all_slots = []
+            current = start_dt
+            while current + timedelta(minutes=slot_duration) <= end_dt:
+                all_slots.append(current)
+                current += timedelta(minutes=slot_duration)
+
+            booked_times = set()
+            if all_slots:
+                booked = db.query(Appointment).filter(
+                    Appointment.doctor_id == doctor_id,
+                    Appointment.appointment_time >= start_dt,
+                    Appointment.appointment_time < end_dt,
+                    Appointment.status != "cancelled",
+                ).all()
+                booked_times = {app.appointment_time for app in booked}
+
+            for slot in all_slots:
+                day_slots.append({
+                    "time": slot.strftime("%I:%M %p"),
+                    "status": "booked" if slot in booked_times else "available",
+                })
+
+        result[date.isoformat()] = {
+            "day_name": date.strftime("%A"),
+            "slots": day_slots,  # empty list means the doctor doesn't work that day
+        }
+
+    return result

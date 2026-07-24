@@ -1,3 +1,4 @@
+// frontend/src/api/client.ts
 import axios from 'axios';
 import { getStoredAuth, clearStoredAuth } from '../auth/authStorage';
 
@@ -58,6 +59,11 @@ export const getAppointmentsByDoctor = (doctorId: number) =>
 // Get doctor availability (working hours)
 export const getDoctorAvailability = (doctorId: number) =>
   api.get(`/doctors/${doctorId}/availability`).then(res => res.data);
+
+// Privacy-safe booking view: available/booked per slot, WITHOUT patient
+// identities. weekStart must be an ISO date string (YYYY-MM-DD).
+export const getDoctorSchedulePreview = (doctorId: number, weekStart: string) =>
+  api.get(`/doctors/${doctorId}/schedule-preview`, { params: { week_start: weekStart } }).then(res => res.data);
 
 export const uploadDoctorImage = (doctorId: number, file: File) => {
   const formData = new FormData();

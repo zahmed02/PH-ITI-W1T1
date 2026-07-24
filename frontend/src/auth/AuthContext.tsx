@@ -2,11 +2,15 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import { fetchMe, loginRequest, logoutRequest, registerRequest } from '../api/auth';
+import type { Role, RegisterPayload } from '../api/auth';
 import { getStoredAuth, setStoredAuth, clearStoredAuth, subscribeToAuthChanges } from './authStorage';
 
 interface AuthUser {
   id: number;
   username: string;
+  role: Role;
+  doctorId: number | null;
+  patientId: number | null;
 }
 
 interface AuthContextValue {
@@ -14,7 +18,7 @@ interface AuthContextValue {
   isAuthenticated: boolean;
   loading: boolean;
   login: (username: string, password: string) => Promise<void>;
-  register: (username: string, password: string) => Promise<void>;
+  register: (payload: RegisterPayload) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -36,7 +40,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     try {
       const me = await fetchMe();
-      setUser({ id: me.id, username: me.username });
+      setUser({ id: me.id, username: me.username, role: me.role, doctorId: me.doctor_id, patientId: me.patient_id });
     } catch {
       clearStoredAuth();
       setUser(null);
@@ -69,13 +73,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (username: string, password: string) => {
     const data = await loginRequest(username, password);
     setStoredAuth({ token: data.access_token, username: data.username });
-    setUser({ id: data.user_id, username: data.username });
+    setUser({ id: data.user_id, username: data.username, role: data.role, doctorId: data.doctor_id, patientId: data.patient_id });
   };
 
-  const register = async (username: string, password: string) => {
-    const data = await registerRequest(username, password);
+  const register = async (payload: RegisterPayload) => {
+    const data = await registerRequest(payload);
     setStoredAuth({ token: data.access_token, username: data.username });
-    setUser({ id: data.user_id, username: data.username });
+    setUser({ id: data.user_id, username: data.username, role: data.role, doctorId: data.doctor_id, patientId: data.patient_id });
   };
 
   const logout = async () => {

@@ -2,10 +2,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { getDoctors, getReviewsByDoctor, uploadDoctorImage } from '../api/client';
 import { useNavigate } from 'react-router-dom';
-import { AnimatedButton, AnimatedCard } from '../components/AnimatedComponents';
+import { AnimatedButton } from '../components/AnimatedComponents';
+import { useAuth } from '../auth/AuthContext';
 import { motion } from 'framer-motion';
 
 export default function Doctors() {
+  const { user } = useAuth();
   const [doctors, setDoctors] = useState<any[]>([]);
   const [specialty, setSpecialty] = useState('');
   const [minExp, setMinExp] = useState<number | undefined>();
@@ -66,6 +68,17 @@ export default function Doctors() {
 
   const triggerFileInput = (doctorId: number) => {
     fileInputRef.current[doctorId]?.click();
+  };
+
+  // The backend only actually authorizes an image upload for an admin (any
+  // doctor) or a doctor account uploading to their OWN doctor_id - showing
+  // the button to anyone else would just produce a 403 on click. Patients
+  // and doctors browsing colleagues never see this control at all.
+  const canUploadFor = (doctorId: number) => {
+    if (!user) return false;
+    if (user.role === 'admin') return true;
+    if (user.role === 'doctor') return user.doctorId === doctorId;
+    return false;
   };
 
   return (
@@ -166,20 +179,25 @@ export default function Doctors() {
                   <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
                   <span>{doc.rating || doc.avg_rating || 'N/A'}</span>
                 </div>
-                <button
-                  onClick={() => triggerFileInput(doc.id)}
-                  className="absolute bottom-2 right-2 bg-primary text-white rounded-full p-1 text-xs hover:bg-primary-container hover:text-on-primary-container transition"
-                  disabled={uploading[doc.id]}
-                >
-                  <span className="material-symbols-outlined text-sm">upload</span>
-                </button>
-                <input
-                  type="file"
-                  accept="image/*"
-                  ref={(el) => (fileInputRef.current[doc.id] = el)}
-                  onChange={(e) => handleFileChange(doc.id, e)}
-                  className="hidden"
-                />
+                {canUploadFor(doc.id) && (
+                  <>
+                    <button
+                      onClick={() => triggerFileInput(doc.id)}
+                      className="absolute bottom-2 right-2 bg-primary text-white rounded-full p-1 text-xs hover:bg-primary-container hover:text-on-primary-container transition"
+                      disabled={uploading[doc.id]}
+                      title="Update photo"
+                    >
+                      <span className="material-symbols-outlined text-sm">upload</span>
+                    </button>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      ref={(el) => { fileInputRef.current[doc.id] = el; }}
+                      onChange={(e) => handleFileChange(doc.id, e)}
+                      className="hidden"
+                    />
+                  </>
+                )}
               </div>
 
               {/* Info Section */}
@@ -198,13 +216,15 @@ export default function Doctors() {
                   >
                     {expandedDoctorId === doc.id ? 'Hide Reviews' : 'View Reviews'}
                   </AnimatedButton>
-                  <AnimatedButton
-                    variant="primary"
-                    onClick={() => goToCalendar(doc.id)}
-                    className="flex-1 text-xs"
-                  >
-                    Schedule
-                  </AnimatedButton>
+                  {user?.role !== 'doctor' && (
+                    <AnimatedButton
+                      variant="primary"
+                      onClick={() => goToCalendar(doc.id)}
+                      className="flex-1 text-xs"
+                    >
+                      Schedule
+                    </AnimatedButton>
+                  )}
                 </div>
 
                 {expandedDoctorId === doc.id && (

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -10,12 +11,13 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from backend.database import get_db
-from backend.models import Appointment, Doctor, Patient, Review
+from backend.models import Appointment, Doctor, DoctorAvailability, Patient, Review, User
 from backend.booking import book_appointment, find_doctors_by_name, clean_doctor_name
 from backend.availability import get_available_slots, get_weekly_availability, parse_iso_date
 from backend.llm_helpers import get_chat_completion, detect_language
 from backend.session_store import session_store
 from backend.schemas import ChatRequest, ChatResponse
+from backend.auth import get_current_user
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 logger = logging.getLogger(__name__)
@@ -47,8 +49,8 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "specialty": {"type": "string", "description": "Medical specialty to filter by, e.g. 'Cardiology'."},
-                    "name": {"type": "string", "description": "A doctor's first or last name to search for."},
+                    "specialty": {"type": ["string", "null"], "description": "Medical specialty to filter by, e.g. 'Cardiology'. Omit or use null if not specified."},
+                    "name": {"type": ["string", "null"], "description": "A doctor's first or last name to search for. Omit or use null if not specified."},
                 },
                 "required": [],
             },
@@ -68,7 +70,7 @@ TOOLS = [
                 "type": "object",
                 "properties": {
                     "doctor_name": {"type": "string", "description": "The doctor's first and/or last name."},
-                    "date": {"type": "string", "description": "ISO date YYYY-MM-DD. Omit to get the whole current week."},
+                    "date": {"type": ["string", "null"], "description": "ISO date YYYY-MM-DD. Use null or omit to get the whole current week."},
                 },
                 "required": ["doctor_name"],
             },
@@ -116,7 +118,43 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_doctor_schedule_overview",
+            "description": (
+                "Get which weekdays (Monday-Friday) each doctor works, across all doctors or filtered "
+                "by specialty. Use this for questions like 'which doctors work every weekday', "
+                "'who takes some days off', or 'what is doctor X's weekly schedule pattern'. "
+                "Returns precomputed lists - never answer this kind of aggregate question without "
+                "calling this tool first."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "specialty": {"type": ["string", "null"], "description": "Optional: limit to one specialty, e.g. 'Cardiology'. Omit or use null if not specified."},
+                },
+                "required": [],
+            },
+        },
+    },
 ]
+
+
+_TOOL_NAMES = [t["function"]["name"] for t in TOOLS]
+# Catches cases where the model writes something like `search_doctors>{...}`
+# or `</function>` directly in its visible reply instead of using the real
+# function-calling mechanism - observed in practice to come bundled with
+# entirely fabricated doctors/data, which is unacceptable in a medical
+# assistant. This is a hard safety net independent of prompt wording.
+_LEAKED_TOOL_CALL_PATTERN = re.compile(
+    r"</?function\b|" + r"|".join(re.escape(name) + r"\s*[>\(]" for name in _TOOL_NAMES),
+    re.IGNORECASE,
+)
+
+
+def _contains_leaked_tool_syntax(text: str) -> bool:
+    return bool(_LEAKED_TOOL_CALL_PATTERN.search(text))
 
 
 def _serialize_doctor(doctor: Doctor, db: Session) -> Dict[str, Any]:
@@ -131,15 +169,38 @@ def _serialize_doctor(doctor: Doctor, db: Session) -> Dict[str, Any]:
     }
 
 
+def _doctor_ids_matching_name(db: Session, clean_name: str):
+    """
+    Matches a name against first_name OR last_name individually AND against
+    the full "first last" concatenation, preferring the full-name match when
+    it exists. Doing only "first_name ILIKE %x% OR last_name ILIKE %x%"
+    silently fails whenever x is a two-word full name like "Sarah Patel" -
+    neither single column contains that two-word substring, even though the
+    doctor genuinely exists.
+    """
+    full_match_ids = [
+        row[0] for row in db.query(Doctor.id).filter(
+            func.concat(Doctor.first_name, ' ', Doctor.last_name).ilike(f"%{clean_name}%")
+        ).all()
+    ]
+    if full_match_ids:
+        return full_match_ids
+
+    return [
+        row[0] for row in db.query(Doctor.id).filter(
+            (Doctor.first_name.ilike(f"%{clean_name}%")) | (Doctor.last_name.ilike(f"%{clean_name}%"))
+        ).all()
+    ]
+
+
 def _tool_search_doctors(db: Session, specialty: Optional[str] = None, name: Optional[str] = None, **_) -> dict:
     query = db.query(Doctor)
     if specialty:
         query = query.filter(Doctor.specialty.ilike(f"%{specialty}%"))
     if name:
         clean = clean_doctor_name(name)
-        query = query.filter(
-            (Doctor.first_name.ilike(f"%{clean}%")) | (Doctor.last_name.ilike(f"%{clean}%"))
-        )
+        matching_ids = _doctor_ids_matching_name(db, clean)
+        query = query.filter(Doctor.id.in_(matching_ids))
 
     # Compute the true total and the per-specialty breakdown with real
     # aggregate queries, rather than len()'ing a possibly-truncated list.
@@ -149,15 +210,17 @@ def _tool_search_doctors(db: Session, specialty: Optional[str] = None, name: Opt
     # only has to repeat a value, never count one itself.
     total_count = query.count()
 
-    breakdown_query = db.query(Doctor.specialty, func.count(Doctor.id))
-    if specialty:
-        breakdown_query = breakdown_query.filter(Doctor.specialty.ilike(f"%{specialty}%"))
-    if name:
-        clean = clean_doctor_name(name)
-        breakdown_query = breakdown_query.filter(
-            (Doctor.first_name.ilike(f"%{clean}%")) | (Doctor.last_name.ilike(f"%{clean}%"))
-        )
-    doctor_count_by_specialty = dict(breakdown_query.group_by(Doctor.specialty).all())
+    # Derive the breakdown from the SAME already-correctly-filtered `query`
+    # (via the list of matching ids) rather than re-implementing the name
+    # filter here - duplicating that logic previously reintroduced the
+    # "full two-word name doesn't match" bug in this second query.
+    matching_ids = [row[0] for row in query.with_entities(Doctor.id).all()]
+    doctor_count_by_specialty = dict(
+        db.query(Doctor.specialty, func.count(Doctor.id))
+        .filter(Doctor.id.in_(matching_ids))
+        .group_by(Doctor.specialty)
+        .all()
+    )
 
     doctors = query.order_by(Doctor.specialty, Doctor.last_name).limit(50).all()
     if not doctors:
@@ -266,12 +329,53 @@ def _tool_get_doctor_reviews(db: Session, doctor_name: str, **_) -> dict:
     }
 
 
+WEEKDAYS_MON_TO_FRI = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+DB_DAY_TO_NAME = {0: "Sunday", 1: "Monday", 2: "Tuesday", 3: "Wednesday", 4: "Thursday", 5: "Friday", 6: "Saturday"}
+
+
+def _tool_get_doctor_schedule_overview(db: Session, specialty: Optional[str] = None, **_) -> dict:
+    query = db.query(Doctor)
+    if specialty:
+        query = query.filter(Doctor.specialty.ilike(f"%{specialty}%"))
+    doctors = query.order_by(Doctor.specialty, Doctor.last_name).limit(50).all()
+    if not doctors:
+        return {"found": False, "doctors": []}
+
+    overview = []
+    for doc in doctors:
+        avail_rows = db.query(DoctorAvailability).filter(DoctorAvailability.doctor_id == doc.id).all()
+        working_days = [DB_DAY_TO_NAME[a.day_of_week] for a in avail_rows if a.day_of_week in DB_DAY_TO_NAME]
+        working_days_sorted = [d for d in DB_DAY_TO_NAME.values() if d in working_days]
+        works_all_weekdays = all(day in working_days_sorted for day in WEEKDAYS_MON_TO_FRI)
+        weekdays_off = [d for d in WEEKDAYS_MON_TO_FRI if d not in working_days_sorted]
+        overview.append({
+            "name": f"Dr. {doc.first_name} {doc.last_name}",
+            "specialty": doc.specialty,
+            "working_days": working_days_sorted,
+            "works_every_weekday_mon_to_fri": works_all_weekdays,
+            "weekdays_off": weekdays_off,
+        })
+
+    return {
+        "found": True,
+        "doctor_schedule_overview": overview,
+        "doctors_working_every_weekday": [o["name"] for o in overview if o["works_every_weekday_mon_to_fri"]],
+        "doctors_with_some_weekdays_off": [o["name"] for o in overview if not o["works_every_weekday_mon_to_fri"]],
+        "note": (
+            "doctors_working_every_weekday and doctors_with_some_weekdays_off are "
+            "precomputed and authoritative - use them directly rather than inferring "
+            "this from other data."
+        ),
+    }
+
+
 TOOL_IMPLEMENTATIONS = {
     "search_doctors": _tool_search_doctors,
     "get_doctor_availability": _tool_get_doctor_availability,
     "book_appointment": _tool_book_appointment,
     "get_my_appointments": _tool_get_my_appointments,
     "get_doctor_reviews": _tool_get_doctor_reviews,
+    "get_doctor_schedule_overview": _tool_get_doctor_schedule_overview,
 }
 
 
@@ -299,9 +403,18 @@ Today's date is {today.strftime('%Y-%m-%d')} ({today.strftime('%A')}).
 
 You have access to tools that query the hospital's real database. You must
 use them for any factual claim about doctors, specialties, availability,
-ratings, reviews, or appointments - NEVER invent or guess this information.
-If a tool returns no results, tell the user honestly instead of making
-something up.
+ratings, reviews, appointments, or weekly schedules - NEVER invent or guess
+this information. If a tool returns no results, tell the user honestly
+instead of making something up. For questions about which doctors work
+every weekday or who has days off, use get_doctor_schedule_overview - do
+not try to work this out from other tools' data.
+
+If none of your available tools can answer a question, say so honestly
+("I don't have a way to look that up") - never simulate, describe, or type
+out what a tool call or its result would look like. You must only invoke
+tools through the actual function-calling mechanism provided to you.
+Writing tool names, JSON, or function-call-looking text as part of your
+visible reply is strictly forbidden, even to explain what you did.
 
 When search_doctors returns "total_count", "specialties", or
 "doctor_count_by_specialty" fields, use those numbers directly for any
@@ -340,13 +453,31 @@ def run_chat_turn(db: Session, session_id: str, patient_id: int, user_message: s
     messages.append({"role": "user", "content": user_message})
 
     for _ in range(MAX_TOOL_ITERATIONS):
-        assistant_message = get_chat_completion(messages, tools=TOOLS)
+        try:
+            assistant_message = get_chat_completion(messages, tools=TOOLS)
+        except Exception:
+            logger.exception("LLM call failed after retries")
+            fallback = "Sorry, I'm having trouble connecting right now. Please try again in a moment."
+            session_store.add_message(session_id, "user", user_message)
+            session_store.add_message(session_id, "assistant", fallback)
+            return fallback
 
         tool_calls = getattr(assistant_message, "tool_calls", None)
         if not tool_calls:
             final_reply = (assistant_message.content or "").strip()
             if not final_reply:
                 final_reply = "Sorry, I couldn't come up with a response. Could you rephrase that?"
+            elif _contains_leaked_tool_syntax(final_reply):
+                # The model wrote something that looks like a fabricated tool
+                # call/result directly in its visible reply instead of using
+                # the real function-calling mechanism - this has been observed
+                # to come with entirely made-up doctors and data. Never show
+                # that to the user; refuse safely instead.
+                logger.warning(f"Blocked a reply containing leaked/fabricated tool-call syntax: {final_reply!r}")
+                final_reply = (
+                    "Sorry, I wasn't able to look that up properly. Could you ask about "
+                    "a specific doctor or department, or rephrase your question?"
+                )
             session_store.add_message(session_id, "user", user_message)
             session_store.add_message(session_id, "assistant", final_reply)
             return final_reply
@@ -418,46 +549,88 @@ def _derive_session_id(patient_id: int, session_id: Optional[str] = None) -> str
     return session_id or f"patient_{patient_id}"
 
 
+def _resolve_acting_patient_id(current_user: User, requested_patient_id: Optional[int]) -> int:
+    """
+    Determines which patient the AI assistant should act as/for, based on
+    who is actually logged in - NEVER trusts a client-supplied patient_id
+    at face value for a patient account, since that would let any patient
+    view or book appointments as any other patient just by changing a
+    request parameter.
+
+    - role="patient": always uses their OWN linked patient_id, full stop.
+      Any patient_id the client sent is ignored.
+    - role="admin":   must explicitly specify which patient they're acting
+      on behalf of (e.g. a front-desk admin taking a phone booking).
+    - role="doctor":  the AI assistant isn't available to doctor logins
+      yet - they have their own Calendar view to manage appointments
+      directly. (A deliberate scope decision, not an oversight.)
+    """
+    if current_user.role == "patient":
+        if not current_user.patient_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Your account isn't linked to a patient record. Please contact an admin.",
+            )
+        return current_user.patient_id
+
+    if current_user.role == "admin":
+        if not requested_patient_id:
+            raise HTTPException(
+                status_code=400,
+                detail="As an admin, specify which patient you're assisting (patient_id).",
+            )
+        return requested_patient_id
+
+    raise HTTPException(
+        status_code=403,
+        detail="The AI assistant is available to patients and admins. Doctors can manage appointments from the Calendar tab.",
+    )
+
+
 @router.post("", response_model=ChatResponse)
 @router.post("/", response_model=ChatResponse)
-def chat_query_params(query: str, patient_id: int, session_id: Optional[str] = None,
-                       db: Session = Depends(get_db)):
+def chat_query_params(query: str, patient_id: Optional[int] = None, session_id: Optional[str] = None,
+                       db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """
     Matches calls like: POST /api/chat/?query=...&patient_id=1
     This is what the current frontend is actually sending - plain query
     params, no request body, no explicit session_id.
     """
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
-    if not patient:
-        raise HTTPException(status_code=404, detail="Patient not found")
-
     if not query or not query.strip():
         raise HTTPException(status_code=400, detail="query cannot be empty")
 
-    sid = _derive_session_id(patient_id, session_id)
-    reply = run_chat_turn(db, sid, patient_id, query.strip())
+    acting_patient_id = _resolve_acting_patient_id(current_user, patient_id)
+
+    patient = db.query(Patient).filter(Patient.id == acting_patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    sid = _derive_session_id(acting_patient_id, session_id)
+    reply = run_chat_turn(db, sid, acting_patient_id, query.strip())
     return ChatResponse(response=reply, session_id=sid)
 
 
 @router.post("/message", response_model=ChatResponse)
-def chat_message(payload: ChatRequest, db: Session = Depends(get_db)):
+def chat_message(payload: ChatRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """
     JSON-body version of the same endpoint, for any client that sends
     {session_id, patient_id, message} instead of query params.
     """
-    patient = db.query(Patient).filter(Patient.id == payload.patient_id).first()
-    if not patient:
-        raise HTTPException(status_code=404, detail="Patient not found")
-
     if not payload.message or not payload.message.strip():
         raise HTTPException(status_code=400, detail="message cannot be empty")
 
-    sid = _derive_session_id(payload.patient_id, payload.session_id)
-    reply = run_chat_turn(db, sid, payload.patient_id, payload.message.strip())
+    acting_patient_id = _resolve_acting_patient_id(current_user, payload.patient_id)
+
+    patient = db.query(Patient).filter(Patient.id == acting_patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    sid = _derive_session_id(acting_patient_id, payload.session_id)
+    reply = run_chat_turn(db, sid, acting_patient_id, payload.message.strip())
     return ChatResponse(response=reply, session_id=sid)
 
 
 @router.post("/reset/{session_id}")
-def reset_chat_session(session_id: str):
+def reset_chat_session(session_id: str, current_user: User = Depends(get_current_user)):
     session_store.reset(session_id)
     return {"message": "Session cleared."}

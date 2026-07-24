@@ -19,6 +19,8 @@ class Doctor(Base):
     reviews = relationship("Review", back_populates="doctor", cascade="all, delete")
     appointments = relationship("Appointment", back_populates="doctor", cascade="all, delete")
     availability = relationship("DoctorAvailability", back_populates="doctor", cascade="all, delete")
+    # One-to-one: the login account for this doctor, if one has been created.
+    login_account = relationship("User", back_populates="doctor", uselist=False)
 
 class Patient(Base):
     __tablename__ = "patients"
@@ -32,6 +34,8 @@ class Patient(Base):
 
     reviews = relationship("Review", back_populates="patient", cascade="all, delete")
     appointments = relationship("Appointment", back_populates="patient", cascade="all, delete")
+    # One-to-one: the login account for this patient, if one has been created.
+    login_account = relationship("User", back_populates="patient", uselist=False)
 
 class Appointment(Base):
     __tablename__ = "appointments"
@@ -77,19 +81,36 @@ class DoctorAvailability(Base):
 
 class User(Base):
     """
-    Login accounts for the portal. Separate from Patient - a User is who
-    logs in to the website; a Patient is a clinical record the chat/booking
-    system operates on. Wiring a User to a specific Patient record is a
-    reasonable next step, but keeping them separate for now avoids forcing
-    every login to already have a patient profile.
+    Login accounts for the portal, with role-based access:
+
+    - role="admin"   -> doctor_id and patient_id are both NULL. Full access
+                        to everything (see backend/auth.py for the checks).
+    - role="doctor"  -> doctor_id links to exactly one Doctor row. This
+                        account can only see/manage that doctor's own data.
+    - role="patient" -> patient_id links to exactly one Patient row. This
+                        account can only see/manage that patient's own data.
+
+    Enforcing "role X must have the matching link set" is done in
+    application code (backend/auth.py), not a DB CHECK constraint - see
+    the migration file (2_role_based_users.sql) for why.
     """
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(50), unique=True, nullable=False, index=True)
     hashed_password = Column(String(255), nullable=False)
+    role = Column(String(10), nullable=False, default="patient")
+    doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="SET NULL"), unique=True, nullable=True)
+    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="SET NULL"), unique=True, nullable=True)
     # Incremented on logout. A JWT is only valid if its embedded "tv" claim
     # matches the current value here - this is what makes logout actually
     # revoke the token server-side instead of merely deleting it client-side.
     token_version = Column(Integer, nullable=False, default=0)
     created_at = Column(TIMESTAMP, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("role IN ('admin', 'doctor', 'patient')", name="users_role_check"),
+    )
+
+    doctor = relationship("Doctor", back_populates="login_account")
+    patient = relationship("Patient", back_populates="login_account")
