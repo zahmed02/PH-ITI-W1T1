@@ -278,12 +278,26 @@ def get_reviews_by_doctor(doctor_id: int, db: Session = Depends(get_db), current
 @router.post("/reviews/", response_model=ReviewResponse)
 def create_review(review: ReviewCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     # A patient may only leave a review AS THEMSELVES; admin may on behalf
-    # of any patient (e.g. entering a phone-in review).
-    # NOTE: "must have had a completed appointment with this doctor first"
-    # is a deliberately deferred business rule - not enforced yet.
+    # of any patient (e.g. entering a phone-in review) and is trusted to
+    # skip the eligibility check below.
     if current_user.role == "patient":
         if current_user.patient_id != review.patient_id:
             raise HTTPException(status_code=403, detail="You can only submit reviews as yourself.")
+
+        # A patient may only review a doctor AFTER an appointment time with
+        # that doctor has actually passed - can't review a visit that
+        # hasn't happened yet.
+        has_past_appointment = db.query(Appointment).filter(
+            Appointment.patient_id == review.patient_id,
+            Appointment.doctor_id == review.doctor_id,
+            Appointment.appointment_time < datetime.now(),
+            Appointment.status != "cancelled",
+        ).first()
+        if not has_past_appointment:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only review a doctor after an appointment time with them has passed.",
+            )
     elif current_user.role != "admin":
         raise HTTPException(status_code=403, detail="You do not have permission to submit reviews.")
 

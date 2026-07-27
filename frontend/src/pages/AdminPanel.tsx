@@ -3,17 +3,23 @@ import { useState, useEffect } from 'react';
 import type { FormEvent } from 'react';
 import { motion } from 'framer-motion';
 import {
-  adminListUsers, adminCreateDoctor, adminCreateAdmin,
+  adminListUsers, adminCreateDoctor, adminCreateAdmin, adminCreatePatient,
 } from '../api/auth';
 import type { AdminUserRow } from '../api/auth';
+import {
+  adminListPatients, getDoctors, getDoctorSchedulePreview, bookAppointment,
+} from '../api/client';
+import type { PatientRow, BookAppointmentResult } from '../api/client';
 import { AnimatedButton } from '../components/AnimatedComponents';
 
 const SPECIALTIES = ['Cardiology', 'Neurology', 'Pediatrics', 'Orthopedics', 'Dermatology'];
 
+type Tab = 'users' | 'new-doctor' | 'new-patient' | 'new-admin' | 'book';
+
 export default function AdminPanel() {
   const [users, setUsers] = useState<AdminUserRow[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
-  const [tab, setTab] = useState<'users' | 'new-doctor' | 'new-admin'>('users');
+  const [tab, setTab] = useState<Tab>('users');
 
   const loadUsers = async () => {
     setLoadingUsers(true);
@@ -33,12 +39,14 @@ export default function AdminPanel() {
     <div>
       <h1 className="text-3xl font-bold text-primary mb-1">Admin Panel</h1>
       <p className="text-sm text-on-surface-variant mb-6">
-        Manage every login account in the system - patients, doctors, and admins.
+        Full manual control - create any account, book any patient with any doctor, all without the AI assistant.
       </p>
 
-      <div className="flex gap-2 mb-6 border-b border-outline-variant">
+      <div className="flex gap-2 mb-6 border-b border-outline-variant flex-wrap">
         {([
           { key: 'users', label: 'All Users' },
+          { key: 'book', label: 'Book Appointment' },
+          { key: 'new-patient', label: 'Create Patient Account' },
           { key: 'new-doctor', label: 'Create Doctor Account' },
           { key: 'new-admin', label: 'Create Admin Account' },
         ] as const).map((t) => (
@@ -55,6 +63,8 @@ export default function AdminPanel() {
       </div>
 
       {tab === 'users' && <UsersTable users={users} loading={loadingUsers} />}
+      {tab === 'book' && <BookAppointmentForm />}
+      {tab === 'new-patient' && <CreatePatientForm onCreated={() => { loadUsers(); setTab('users'); }} />}
       {tab === 'new-doctor' && <CreateDoctorForm onCreated={() => { loadUsers(); setTab('users'); }} />}
       {tab === 'new-admin' && <CreateAdminForm onCreated={() => { loadUsers(); setTab('users'); }} />}
     </div>
@@ -206,6 +216,79 @@ function CreateDoctorForm({ onCreated }: { onCreated: () => void }) {
   );
 }
 
+function CreatePatientForm({ onCreated }: { onCreated: () => void }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+    if (!username.trim() || password.length < 8 || !firstName.trim() || !lastName.trim() || !email.trim()) {
+      setError('Fill in all required fields (password needs 8+ characters).');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const created = await adminCreatePatient({
+        username: username.trim(),
+        password,
+        first_name: firstName.trim(),
+        last_name: lastName.trim(),
+        email: email.trim(),
+        phone: phone.trim() || undefined,
+      });
+      setSuccess(`Patient account "${created.username}" created (Patient ID ${created.patient_id}). Share the username/password with them securely.`);
+      setUsername(''); setPassword(''); setFirstName(''); setLastName(''); setEmail(''); setPhone('');
+      onCreated();
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || 'Could not create the account.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <motion.form
+      onSubmit={handleSubmit}
+      className="bg-white/90 backdrop-blur-sm rounded-xl border border-outline-variant shadow-sm p-6 max-w-xl space-y-4"
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+    >
+      <p className="text-xs text-on-surface-variant bg-surface-container-low p-3 rounded-lg">
+        Creates the patient's record and login account together - useful for booking a walk-in or
+        phone patient who doesn't want to self-register.
+      </p>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="First Name" value={firstName} onChange={setFirstName} />
+        <Field label="Last Name" value={lastName} onChange={setLastName} />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Email" value={email} onChange={setEmail} type="email" />
+        <Field label="Phone (optional)" value={phone} onChange={setPhone} type="tel" />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Username" value={username} onChange={setUsername} />
+        <Field label="Temporary Password" value={password} onChange={setPassword} type="password" />
+      </div>
+
+      {error && <p className="text-sm text-error">{error}</p>}
+      {success && <p className="text-sm text-secondary">{success}</p>}
+
+      <AnimatedButton variant="primary" type="submit" onClick={() => {}} className="w-full" disabled={submitting}>
+        {submitting ? 'Creating...' : 'Create Patient Account'}
+      </AnimatedButton>
+    </motion.form>
+  );
+}
+
 function CreateAdminForm({ onCreated }: { onCreated: () => void }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -252,6 +335,181 @@ function CreateAdminForm({ onCreated }: { onCreated: () => void }) {
 
       <AnimatedButton variant="primary" type="submit" onClick={() => {}} className="w-full" disabled={submitting}>
         {submitting ? 'Creating...' : 'Create Admin Account'}
+      </AnimatedButton>
+    </motion.form>
+  );
+}
+
+/**
+ * Direct booking, no AI involved: pick a registered patient, pick a
+ * doctor, pick a date, then only the doctor's ACTUALLY-open slots for
+ * that date are offered (fetched from the same privacy-safe
+ * schedule-preview endpoint the patient booking calendar uses).
+ */
+function BookAppointmentForm() {
+  const [patients, setPatients] = useState<PatientRow[]>([]);
+  const [doctors, setDoctors] = useState<any[]>([]);
+  const [patientId, setPatientId] = useState<number | ''>('');
+  const [doctorId, setDoctorId] = useState<number | ''>('');
+  const [date, setDate] = useState('');
+  const [availableTimes, setAvailableTimes] = useState<string[]>([]);
+  const [time, setTime] = useState('');
+  const [loadingTimes, setLoadingTimes] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<BookAppointmentResult | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    adminListPatients().then(setPatients).catch(() => {});
+    getDoctors().then(setDoctors).catch(() => {});
+  }, []);
+
+  // Whenever doctor or date changes, fetch that doctor's real availability
+  // for the week containing that date and pull out just that date's open
+  // (not booked, not off-duty) slots.
+  useEffect(() => {
+    const fetchTimes = async () => {
+      setAvailableTimes([]);
+      setTime('');
+      if (!doctorId || !date) return;
+      setLoadingTimes(true);
+      try {
+        const chosen = new Date(date + 'T00:00:00');
+        const day = chosen.getDay();
+        const monday = new Date(chosen);
+        monday.setDate(chosen.getDate() - ((day + 6) % 7)); // back up to Monday
+        const weekStart = monday.toISOString().split('T')[0];
+
+        const preview = await getDoctorSchedulePreview(Number(doctorId), weekStart);
+        const dayData = preview[date];
+        const open = (dayData?.slots || [])
+          .filter((s: any) => s.status === 'available')
+          .map((s: any) => s.time);
+        setAvailableTimes(open);
+      } catch {
+        setAvailableTimes([]);
+      } finally {
+        setLoadingTimes(false);
+      }
+    };
+    fetchTimes();
+  }, [doctorId, date]);
+
+  const to24Hour = (label: string) => {
+    const [t, meridiem] = label.split(' ');
+    let [hour, minute] = t.split(':').map(Number);
+    if (meridiem === 'AM' && hour === 12) hour = 0;
+    if (meridiem === 'PM' && hour !== 12) hour += 12;
+    return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setResult(null);
+    if (!patientId || !doctorId || !date || !time) {
+      setError('Please select a patient, doctor, date, and time.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await bookAppointment({
+        doctor_id: Number(doctorId),
+        patient_id: Number(patientId),
+        date,
+        time: to24Hour(time),
+      });
+      setResult(res);
+      if (res.success) {
+        setTime('');
+        // Re-fetch times so the just-booked slot disappears from the list.
+        setAvailableTimes((prev) => prev.filter((t) => t !== time));
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || 'Could not book the appointment.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const todayISO = new Date().toISOString().split('T')[0];
+
+  return (
+    <motion.form
+      onSubmit={handleSubmit}
+      className="bg-white/90 backdrop-blur-sm rounded-xl border border-outline-variant shadow-sm p-6 max-w-xl space-y-4"
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+    >
+      <div>
+        <label className="text-xs font-medium text-on-surface-variant block mb-1">Patient</label>
+        <select
+          value={patientId}
+          onChange={(e) => setPatientId(e.target.value ? Number(e.target.value) : '')}
+          className="w-full px-3 py-2 rounded-lg border border-outline-variant bg-surface-bright text-sm"
+        >
+          <option value="">Choose a patient...</option>
+          {patients.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.first_name} {p.last_name} ({p.email}) - ID {p.id}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label className="text-xs font-medium text-on-surface-variant block mb-1">Doctor</label>
+        <select
+          value={doctorId}
+          onChange={(e) => setDoctorId(e.target.value ? Number(e.target.value) : '')}
+          className="w-full px-3 py-2 rounded-lg border border-outline-variant bg-surface-bright text-sm"
+        >
+          <option value="">Choose a doctor...</option>
+          {doctors.map((d) => (
+            <option key={d.id} value={d.id}>
+              Dr. {d.first_name} {d.last_name} - {d.specialty}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-xs font-medium text-on-surface-variant block mb-1">Date</label>
+          <input
+            type="date"
+            min={todayISO}
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-outline-variant bg-surface-bright text-sm"
+          />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-on-surface-variant block mb-1">Time</label>
+          <select
+            value={time}
+            onChange={(e) => setTime(e.target.value)}
+            disabled={!doctorId || !date || loadingTimes}
+            className="w-full px-3 py-2 rounded-lg border border-outline-variant bg-surface-bright text-sm disabled:opacity-60"
+          >
+            <option value="">
+              {loadingTimes ? 'Loading...' : !doctorId || !date ? 'Pick doctor + date first' : availableTimes.length === 0 ? 'No open slots' : 'Choose a time...'}
+            </option>
+            {availableTimes.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {error && <p className="text-sm text-error">{error}</p>}
+      {result && (
+        <p className={`text-sm ${result.success ? 'text-secondary' : 'text-error'}`}>
+          {result.message}
+          {result.success && result.confirmation_email_sent && ' A confirmation email was sent to the patient.'}
+        </p>
+      )}
+
+      <AnimatedButton variant="primary" type="submit" onClick={() => {}} className="w-full" disabled={submitting}>
+        {submitting ? 'Booking...' : 'Book Appointment'}
       </AnimatedButton>
     </motion.form>
   );

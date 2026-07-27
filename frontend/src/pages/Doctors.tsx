@@ -1,6 +1,6 @@
 // src/pages/Doctors.tsx
 import { useState, useEffect, useRef } from 'react';
-import { getDoctors, getReviewsByDoctor, uploadDoctorImage } from '../api/client';
+import { getDoctors, getReviewsByDoctor, uploadDoctorImage, getAppointmentsByPatient, createReview } from '../api/client';
 import { useNavigate } from 'react-router-dom';
 import { AnimatedButton } from '../components/AnimatedComponents';
 import { useAuth } from '../auth/AuthContext';
@@ -16,6 +16,7 @@ export default function Doctors() {
   const [reviewsMap, setReviewsMap] = useState<{ [key: number]: any[] }>({});
   const [loadingReviews, setLoadingReviews] = useState<{ [key: number]: boolean }>({});
   const [uploading, setUploading] = useState<{ [key: number]: boolean }>({});
+  const [reviewableDoctorIds, setReviewableDoctorIds] = useState<Set<number>>(new Set());
   const fileInputRef = useRef<{ [key: number]: HTMLInputElement | null }>({});
   const navigate = useNavigate();
 
@@ -29,6 +30,24 @@ export default function Doctors() {
   };
 
   useEffect(() => { search(); }, []);
+
+  // A patient can review a doctor once an appointment time with them has
+  // passed (the backend enforces this for real - this is just so we don't
+  // show a "Write a Review" form that would immediately 403 on submit).
+  useEffect(() => {
+    if (user?.role !== 'patient' || !user.patientId) return;
+    getAppointmentsByPatient(user.patientId)
+      .then((appointments: any[]) => {
+        const now = new Date();
+        const ids = new Set<number>(
+          appointments
+            .filter((a) => new Date(a.appointment_time) < now && a.status !== 'cancelled')
+            .map((a) => a.doctor_id)
+        );
+        setReviewableDoctorIds(ids);
+      })
+      .catch(() => {});
+  }, [user]);
 
   const toggleReviews = async (doctorId: number) => {
     if (expandedDoctorId === doctorId) {
@@ -47,6 +66,16 @@ export default function Doctors() {
         setLoadingReviews(prev => ({ ...prev, [doctorId]: false }));
       }
     }
+  };
+
+  const refreshReviewsFor = async (doctorId: number) => {
+    try {
+      const reviews = await getReviewsByDoctor(doctorId);
+      setReviewsMap(prev => ({ ...prev, [doctorId]: reviews }));
+    } catch {
+      // ignore
+    }
+    await search(); // pick up the doctor's updated average rating on the card
   };
 
   const goToCalendar = (doctorId: number) => navigate(`/calendar?doctorId=${doctorId}`);
@@ -245,6 +274,14 @@ export default function Doctors() {
                     ) : (
                       <p className="text-xs text-on-surface-variant mt-1">No reviews yet.</p>
                     )}
+
+                    {user?.role === 'patient' && user.patientId && reviewableDoctorIds.has(doc.id) && (
+                      <WriteReviewForm
+                        doctorId={doc.id}
+                        patientId={user.patientId}
+                        onSubmitted={() => refreshReviewsFor(doc.id)}
+                      />
+                    )}
                   </div>
                 )}
               </div>
@@ -252,6 +289,71 @@ export default function Doctors() {
           ))}
         </div>
       </section>
+    </div>
+  );
+}
+
+function WriteReviewForm({
+  doctorId, patientId, onSubmitted,
+}: {
+  doctorId: number; patientId: number; onSubmitted: () => void;
+}) {
+  const [rating, setRating] = useState(5);
+  const [comment, setComment] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState(false);
+
+  const handleSubmit = async () => {
+    setError(null);
+    setSubmitting(true);
+    try {
+      await createReview({ doctor_id: doctorId, patient_id: patientId, rating, comment: comment.trim() || undefined });
+      setSubmitted(true);
+      setComment('');
+      onSubmitted();
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || 'Could not submit your review.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (submitted) {
+    return <p className="text-xs text-secondary mt-2">Thanks - your review has been posted.</p>;
+  }
+
+  return (
+    <div className="mt-3 pt-3 border-t border-outline-variant/30">
+      <p className="text-xs font-medium text-primary mb-1">Write a Review</p>
+      <div className="flex items-center gap-1 mb-2">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button
+            key={n}
+            type="button"
+            onClick={() => setRating(n)}
+            className="material-symbols-outlined text-lg"
+            style={{ fontVariationSettings: n <= rating ? "'FILL' 1" : "'FILL' 0", color: n <= rating ? '#eab308' : '#9ca3af' }}
+          >
+            star
+          </button>
+        ))}
+      </div>
+      <textarea
+        value={comment}
+        onChange={(e) => setComment(e.target.value)}
+        placeholder="How was your visit?"
+        rows={2}
+        className="w-full px-2 py-1.5 rounded-lg border border-outline-variant bg-surface-bright text-xs mb-2"
+      />
+      {error && <p className="text-xs text-error mb-2">{error}</p>}
+      <button
+        onClick={handleSubmit}
+        disabled={submitting}
+        className="bg-primary text-white text-xs px-3 py-1.5 rounded-lg hover:bg-primary/90 disabled:opacity-60"
+      >
+        {submitting ? 'Submitting...' : 'Submit Review'}
+      </button>
     </div>
   );
 }

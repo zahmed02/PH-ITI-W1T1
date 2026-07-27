@@ -2,6 +2,7 @@
 import { NavLink, useLocation, useOutlet, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import BackgroundSlideshow from './BackgroundSlideshow';
+import NotificationBell from './NotificationBell';
 import { useAuth } from '../auth/AuthContext';
 
 // Page transition variants – smooth transform
@@ -106,13 +107,7 @@ export default function Layout() {
           ))}
         </nav>
         <div className="flex items-center gap-3">
-          <motion.span
-            className="material-symbols-outlined text-on-surface-variant cursor-pointer"
-            whileHover={{ scale: 1.2, rotate: 10, color: '#00478d' }}
-            transition={{ type: 'spring', stiffness: 300 }}
-          >
-            notifications
-          </motion.span>
+          {role === 'doctor' && <NotificationBell />}
 
           {/* Account / logout */}
           <div className="flex items-center gap-2">
@@ -208,7 +203,7 @@ export default function Layout() {
         transition={{ duration: 0.4, delay: 0.2 }}
       >
         <div className="bg-white/70 backdrop-blur-sm rounded-xl p-4 md:p-6 shadow-sm border border-outline-variant/30 relative overflow-hidden">
-          {/* Use AnimatePresence with mode="wait" and the outlet */}
+          {/* ✅ Use AnimatePresence with mode="wait" and the outlet */}
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}

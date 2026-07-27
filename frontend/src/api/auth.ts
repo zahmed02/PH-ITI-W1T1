@@ -63,6 +63,15 @@ export interface CreateAdminPayload {
   password: string;
 }
 
+export interface CreatePatientPayload {
+  username: string;
+  password: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone?: string;
+}
+
 export interface AdminUserRow {
   id: number;
   username: string;
@@ -80,3 +89,6 @@ export const adminCreateDoctor = (payload: CreateDoctorPayload) =>
 
 export const adminCreateAdmin = (payload: CreateAdminPayload) =>
   api.post<AdminUserRow>('/auth/admin/admins', payload).then(res => res.data);
+
+export const adminCreatePatient = (payload: CreatePatientPayload) =>
+  api.post<AdminUserRow>('/auth/admin/patients', payload).then(res => res.data);

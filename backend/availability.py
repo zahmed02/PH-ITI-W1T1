@@ -175,3 +175,4 @@ def get_schedule_preview(doctor_id: int, week_start_date, db: Session,
         }
 
     return result
+
