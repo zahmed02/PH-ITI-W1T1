@@ -2,8 +2,9 @@ import re
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime
-from backend.models import Doctor, Appointment
+from backend.models import Doctor, Patient, Appointment, Notification
 from backend.availability import get_doctor_working_hours, _compute_free_slots
+from backend.email_service import send_appointment_confirmation
 import logging
 
 logger = logging.getLogger(__name__)
@@ -64,23 +65,16 @@ def find_doctor_by_name(db: Session, doctor_name: str):
     return None
 
 
-def book_appointment(db: Session, doctor_name: str, patient_id: int, date_expr: str, time_expr: str) -> dict:
+def _book_appointment_core(db: Session, doctor: Doctor, patient_id: int, date_expr: str, time_expr: str) -> dict:
     """
-    date_expr: ISO date string (YYYY-MM-DD)
-    time_expr: time string in HH:MM (24-hour)
+    Shared validation + creation logic once a specific Doctor row is
+    already resolved (by name for the AI assistant, or by id for the
+    admin's direct booking form / a future patient self-booking button).
+    Every booking path in the app funnels through here, which is what
+    guarantees a doctor notification and a patient confirmation email are
+    ALWAYS produced together with the appointment - no booking path can
+    accidentally skip them.
     """
-    matches = find_doctors_by_name(db, doctor_name)
-    if len(matches) == 0:
-        return {"success": False, "message": f"Could not find a doctor named '{doctor_name}'."}
-    if len(matches) > 1:
-        options = ", ".join(f"Dr. {d.first_name} {d.last_name} ({d.specialty})" for d in matches)
-        return {
-            "success": False,
-            "ambiguous": True,
-            "message": f"'{doctor_name}' matches more than one doctor: {options}. Please specify which one."
-        }
-    doctor = matches[0]
-
     try:
         date_obj = datetime.strptime(date_expr, "%Y-%m-%d").date()
         time_obj = datetime.strptime(time_expr, "%H:%M").time()
@@ -107,6 +101,10 @@ def book_appointment(db: Session, doctor_name: str, patient_id: int, date_expr: 
                        f"Available times on {date_obj.strftime('%Y-%m-%d')}: {available_str}."
         }
 
+    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    if not patient:
+        return {"success": False, "message": f"No patient found with ID {patient_id}."}
+
     try:
         new_app = Appointment(
             doctor_id=doctor.id,
@@ -115,17 +113,72 @@ def book_appointment(db: Session, doctor_name: str, patient_id: int, date_expr: 
             status="scheduled"
         )
         db.add(new_app)
+        db.flush()  # assigns new_app.id without committing yet
+
+        # A doctor notification is created in the SAME transaction as the
+        # appointment - if either fails, both roll back together, so a
+        # doctor can never end up with a booking that has no notification.
+        notification_message = (
+            f"New appointment: {patient.first_name} {patient.last_name} booked with you on "
+            f"{appointment_datetime.strftime('%A, %Y-%m-%d')} at {appointment_datetime.strftime('%I:%M %p')}."
+        )
+        db.add(Notification(
+            doctor_id=doctor.id,
+            appointment_id=new_app.id,
+            message=notification_message,
+        ))
+
         db.commit()
         db.refresh(new_app)
-        return {
-            "success": True,
-            "message": f"Appointment booked successfully with Dr. {doctor.first_name} {doctor.last_name} on {appointment_datetime.strftime('%Y-%m-%d at %I:%M %p')}.",
-            "appointment_id": new_app.id,
-            "doctor_name": f"{doctor.first_name} {doctor.last_name}",
-            "date": appointment_datetime.strftime("%Y-%m-%d"),
-            "time": appointment_datetime.strftime("%I:%M %p")
-        }
     except Exception as e:
         db.rollback()
         logger.error(f"Booking insertion failed: {e}")
         return {"success": False, "message": "An error occurred while booking. Please try again later."}
+
+    # Email is sent AFTER the commit succeeds, and is best-effort - a slow
+    # or unconfigured mail server must never undo an otherwise-successful
+    # booking. send_appointment_confirmation() never raises; it returns
+    # False on any failure, which we just note in the response.
+    email_sent = send_appointment_confirmation(patient, doctor, new_app)
+
+    return {
+        "success": True,
+        "message": f"Appointment booked successfully with Dr. {doctor.first_name} {doctor.last_name} on {appointment_datetime.strftime('%Y-%m-%d at %I:%M %p')}.",
+        "appointment_id": new_app.id,
+        "doctor_id": doctor.id,
+        "doctor_name": f"{doctor.first_name} {doctor.last_name}",
+        "patient_id": patient.id,
+        "date": appointment_datetime.strftime("%Y-%m-%d"),
+        "time": appointment_datetime.strftime("%I:%M %p"),
+        "confirmation_email_sent": email_sent,
+    }
+
+
+def book_appointment(db: Session, doctor_name: str, patient_id: int, date_expr: str, time_expr: str) -> dict:
+    """
+    Name-based booking - used by the AI assistant, which only has a
+    doctor's name from natural language, not their id.
+    """
+    matches = find_doctors_by_name(db, doctor_name)
+    if len(matches) == 0:
+        return {"success": False, "message": f"Could not find a doctor named '{doctor_name}'."}
+    if len(matches) > 1:
+        options = ", ".join(f"Dr. {d.first_name} {d.last_name} ({d.specialty})" for d in matches)
+        return {
+            "success": False,
+            "ambiguous": True,
+            "message": f"'{doctor_name}' matches more than one doctor: {options}. Please specify which one."
+        }
+    return _book_appointment_core(db, matches[0], patient_id, date_expr, time_expr)
+
+
+def book_appointment_by_id(db: Session, doctor_id: int, patient_id: int, date_expr: str, time_expr: str) -> dict:
+    """
+    ID-based booking - used by the admin's direct booking form (and
+    reusable later for a patient self-booking UI), where the doctor is
+    already chosen from a dropdown rather than typed as free text.
+    """
+    doctor = db.query(Doctor).filter(Doctor.id == doctor_id).first()
+    if not doctor:
+        return {"success": False, "message": f"No doctor found with ID {doctor_id}."}
+    return _book_appointment_core(db, doctor, patient_id, date_expr, time_expr)

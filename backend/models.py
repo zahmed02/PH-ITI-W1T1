@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, Float, TIMESTAMP, ForeignKey, CheckConstraint, Time
+from sqlalchemy import Column, Integer, String, Text, Float, TIMESTAMP, ForeignKey, CheckConstraint, Time, Boolean
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from backend.database import Base
@@ -50,6 +50,7 @@ class Appointment(Base):
 
     doctor = relationship("Doctor", back_populates="appointments")
     patient = relationship("Patient", back_populates="appointments")
+    notifications = relationship("Notification", back_populates="appointment", cascade="all, delete")
 
 class Review(Base):
     __tablename__ = "reviews"
@@ -114,3 +115,25 @@ class User(Base):
 
     doctor = relationship("Doctor", back_populates="login_account")
     patient = relationship("Patient", back_populates="login_account")
+
+
+class Notification(Base):
+    """
+    In-app notifications for doctors about their own appointments (new
+    booking, cancellation, etc). Created server-side inside
+    backend/booking.py right alongside the appointment itself - never
+    created directly by a route, so there's exactly one code path that
+    can produce them and it can't be skipped by any booking entry point
+    (AI chat, admin direct booking, or a future patient self-booking UI).
+    """
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
+    appointment_id = Column(Integer, ForeignKey("appointments.id", ondelete="CASCADE"), nullable=True)
+    message = Column(Text, nullable=False)
+    is_read = Column(Boolean, nullable=False, default=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+    doctor = relationship("Doctor")
+    appointment = relationship("Appointment", back_populates="notifications")

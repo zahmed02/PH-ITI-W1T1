@@ -7,12 +7,16 @@ import shutil
 from datetime import datetime
 
 from backend.database import get_db
-from backend.models import Doctor, Patient, DoctorAvailability, Appointment, Review, User
+from backend.models import Doctor, Patient, DoctorAvailability, Appointment, Review, User, Notification
 from backend.availability import get_schedule_preview, parse_iso_date
+from backend.booking import book_appointment_by_id
 from backend.schemas import (
     DoctorResponse, DoctorWithDetails,
+    PatientResponse,
     AppointmentCreate, AppointmentResponse,
-    ReviewCreate, ReviewResponse
+    ReviewCreate, ReviewResponse,
+    BookAppointmentRequest, BookAppointmentResult,
+    NotificationOut,
 )
 from backend.auth import (
     get_current_user,
@@ -157,6 +161,21 @@ def get_doctor_schedule_preview(
 
     return get_schedule_preview(doctor_id, start_date, db)
 
+# -------------------- PATIENT ENDPOINTS --------------------
+
+@router.get("/patients/", response_model=List[PatientResponse])
+def get_all_patients(
+    skip: int = 0,
+    limit: int = 200,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    # Unlike doctors, the patient list is NOT public - it's sensitive
+    # personal data (names, emails, phone numbers). Admin-only, used for
+    # the admin's "create patient" confirmation and the direct-booking
+    # patient picker.
+    return db.query(Patient).order_by(Patient.last_name, Patient.first_name).offset(skip).limit(limit).all()
+
 # -------------------- APPOINTMENT ENDPOINTS --------------------
 
 @router.get("/appointments/", response_model=List[AppointmentResponse])
@@ -186,9 +205,15 @@ def get_appointments_by_patient(patient_id: int, db: Session = Depends(get_db), 
 
 @router.post("/appointments/", response_model=AppointmentResponse)
 def create_appointment(appointment: AppointmentCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """
+    NOTE: this is a low-level raw insert - it does NOT check the doctor's
+    working hours, does NOT check for double-booking, and does NOT create
+    a doctor notification or send a patient confirmation email. Nothing
+    in the frontend currently calls this. For any real booking, use
+    POST /appointments/book instead, which runs the full validation +
+    notification + email pipeline in backend/booking.py.
+    """
     # A patient may only book for THEMSELVES; admin may book for anyone.
-    # (Doctors don't book through this raw endpoint - the AI assistant/
-    # calendar flows are the intended booking paths.)
     if current_user.role == "patient":
         if current_user.patient_id != appointment.patient_id:
             raise HTTPException(status_code=403, detail="You can only book appointments for yourself.")
@@ -207,6 +232,32 @@ def create_appointment(appointment: AppointmentCreate, db: Session = Depends(get
     db.commit()
     db.refresh(db_appointment)
     return db_appointment
+
+@router.post("/appointments/book", response_model=BookAppointmentResult)
+def book_appointment_endpoint(
+    payload: BookAppointmentRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    The real, validated booking path - checks the doctor's working hours
+    and for double-booking, then creates the appointment, a notification
+    for the doctor, and (best-effort) a confirmation email to the
+    patient, all through backend/booking.py::book_appointment_by_id.
+
+    This is what the admin's direct "Book Appointment" form uses (no AI
+    involved), and is reusable later for a patient self-booking button.
+    """
+    if current_user.role == "patient":
+        if current_user.patient_id != payload.patient_id:
+            raise HTTPException(status_code=403, detail="You can only book appointments for yourself.")
+    elif current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="You do not have permission to book appointments directly. Contact an admin if you need an appointment booked.")
+
+    result = book_appointment_by_id(db, payload.doctor_id, payload.patient_id, payload.date, payload.time)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("message", "Could not book the appointment."))
+    return result
 
 # -------------------- REVIEW ENDPOINTS --------------------
 # Reviews are public reading material (patients browsing doctors see
@@ -252,3 +303,46 @@ def create_review(review: ReviewCreate, db: Session = Depends(get_db), current_u
     db.commit()
     db.refresh(db_review)
     return db_review
+
+# -------------------- NOTIFICATIONS --------------------
+# Doctor-only: a doctor sees notifications about their OWN appointments.
+# Created automatically by backend/booking.py on every successful
+# booking, regardless of which path created it (AI chat, admin direct
+# booking, or a future patient self-booking button).
+
+@router.get("/notifications/me", response_model=List[NotificationOut])
+def get_my_notifications(
+    unread_only: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_doctor_or_admin),
+):
+    if current_user.role == "doctor":
+        if not current_user.doctor_id:
+            raise HTTPException(status_code=400, detail="Your account isn't linked to a doctor record.")
+        doctor_id = current_user.doctor_id
+    else:
+        # Admins don't have their own notification inbox (they aren't
+        # tied to one doctor) - nothing to return.
+        return []
+
+    query = db.query(Notification).filter(Notification.doctor_id == doctor_id)
+    if unread_only:
+        query = query.filter(Notification.is_read.is_(False))
+    return query.order_by(Notification.created_at.desc()).limit(50).all()
+
+@router.post("/notifications/{notification_id}/read")
+def mark_notification_read(
+    notification_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_doctor_or_admin),
+):
+    notification = db.query(Notification).filter(Notification.id == notification_id).first()
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notification not found")
+
+    # A doctor may only mark their OWN notifications read; admin may mark any.
+    ensure_can_access_doctor_data(current_user, notification.doctor_id)
+
+    notification.is_read = True
+    db.commit()
+    return {"message": "Marked as read."}

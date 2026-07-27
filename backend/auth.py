@@ -41,6 +41,7 @@ from backend.models import Doctor, Patient, User
 from backend.schemas import (
     AdminCreateAdminRequest,
     AdminCreateDoctorRequest,
+    AdminCreatePatientRequest,
     PatientRegister,
     TokenResponse,
     UserLogin,
@@ -300,6 +301,46 @@ def admin_create_admin(
         raise HTTPException(status_code=400, detail="That username is already taken.")
 
     user = User(username=payload.username, hashed_password=hash_password(payload.password), role="admin")
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.post("/admin/patients", response_model=UserOut)
+def admin_create_patient(
+    payload: AdminCreatePatientRequest,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Admin-only. Creates a new Patient record and its login account
+    together, directly - no AI assistant involved. Mirrors
+    admin_create_doctor above.
+    """
+    existing_user = db.query(User).filter(func.lower(User.username) == payload.username.lower()).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="That username is already taken.")
+
+    existing_patient = db.query(Patient).filter(func.lower(Patient.email) == payload.email.lower()).first()
+    if existing_patient:
+        raise HTTPException(status_code=400, detail="A patient with that email already exists.")
+
+    patient = Patient(
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        email=payload.email,
+        phone=payload.phone,
+    )
+    db.add(patient)
+    db.flush()
+
+    user = User(
+        username=payload.username,
+        hashed_password=hash_password(payload.password),
+        role="patient",
+        patient_id=patient.id,
+    )
     db.add(user)
     db.commit()
     db.refresh(user)

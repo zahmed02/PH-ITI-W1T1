@@ -187,3 +187,60 @@ class AdminCreateAdminRequest(BaseModel):
 
     _username_check = field_validator("username")(classmethod(lambda cls, v: _validate_username(v)))
     _password_check = field_validator("password")(classmethod(lambda cls, v: _validate_password(v)))
+
+
+class AdminCreatePatientRequest(BaseModel):
+    """
+    Admin-only: creates a Patient record and its login account together,
+    directly - no AI assistant involved. Mirrors AdminCreateDoctorRequest.
+    """
+    username: str
+    password: str
+    first_name: str
+    last_name: str
+    email: EmailStr
+    phone: Optional[str] = None
+
+    _username_check = field_validator("username")(classmethod(lambda cls, v: _validate_username(v)))
+    _password_check = field_validator("password")(classmethod(lambda cls, v: _validate_password(v)))
+
+
+# -------------------- DIRECT BOOKING (no AI) --------------------
+
+class BookAppointmentRequest(BaseModel):
+    """
+    Used by POST /appointments/book - the direct, non-AI booking path.
+    An admin may specify any doctor_id/patient_id; a patient calling this
+    themselves may only specify their own patient_id (enforced in
+    routes.py, same pattern as POST /appointments/).
+    """
+    doctor_id: int
+    patient_id: int
+    date: str   # ISO date, YYYY-MM-DD
+    time: str   # 24-hour, HH:MM
+
+
+class BookAppointmentResult(BaseModel):
+    success: bool
+    message: str
+    ambiguous: Optional[bool] = None
+    appointment_id: Optional[int] = None
+    doctor_id: Optional[int] = None
+    doctor_name: Optional[str] = None
+    patient_id: Optional[int] = None
+    date: Optional[str] = None
+    time: Optional[str] = None
+    confirmation_email_sent: Optional[bool] = None
+
+
+# -------------------- NOTIFICATIONS --------------------
+
+class NotificationOut(BaseModel):
+    id: int
+    appointment_id: Optional[int] = None
+    message: str
+    is_read: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
