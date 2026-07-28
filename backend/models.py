@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, Float, TIMESTAMP, ForeignKey, CheckConstraint, Time, Boolean
+from sqlalchemy import Column, Integer, String, Text, Float, TIMESTAMP, ForeignKey, CheckConstraint, Time, Boolean, Date, UniqueConstraint
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from backend.database import Base
@@ -137,3 +137,59 @@ class Notification(Base):
 
     doctor = relationship("Doctor")
     appointment = relationship("Appointment", back_populates="notifications")
+
+
+class DoctorTimeOff(Base):
+    """
+    A specific date a doctor is NOT working, overriding their normal
+    weekly recurring hours in doctor_availability for that one date.
+    Checked by backend/availability.py::get_doctor_working_hours - the
+    single choke point used by every slot-computation path (booking, the
+    AI assistant, the schedule-preview endpoint), so a day off blocks new
+    bookings everywhere automatically. Existing appointments on that date
+    are NOT auto-deleted here - backend/appointment_actions.py bulk-
+    cancels them (with patient emails) as part of creating this row.
+    """
+    __tablename__ = "doctor_time_off"
+
+    id = Column(Integer, primary_key=True, index=True)
+    doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
+    off_date = Column(Date, nullable=False)
+    reason = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("doctor_id", "off_date", name="doctor_time_off_doctor_date_unique"),
+    )
+
+    doctor = relationship("Doctor")
+
+
+class AppointmentTransfer(Base):
+    """
+    Tracks a doctor-initiated transfer of a (now-cancelled) appointment to
+    a colleague in the same specialty. Nothing moves until the receiving
+    doctor manually confirms (backend/appointment_actions.py re-checks
+    they're actually free at that date/time at confirm-time, since their
+    schedule may have changed since the transfer was proposed) - only
+    then is a new Appointment created and the patient emailed the new PDF.
+    """
+    __tablename__ = "appointment_transfers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    appointment_id = Column(Integer, ForeignKey("appointments.id", ondelete="CASCADE"), nullable=False)
+    from_doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
+    to_doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
+    status = Column(String(20), nullable=False, default="pending")  # pending | confirmed | declined
+    new_appointment_id = Column(Integer, ForeignKey("appointments.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    resolved_at = Column(TIMESTAMP, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('pending', 'confirmed', 'declined')", name="appointment_transfers_status_check"),
+    )
+
+    appointment = relationship("Appointment", foreign_keys=[appointment_id])
+    from_doctor = relationship("Doctor", foreign_keys=[from_doctor_id])
+    to_doctor = relationship("Doctor", foreign_keys=[to_doctor_id])
+    new_appointment = relationship("Appointment", foreign_keys=[new_appointment_id])

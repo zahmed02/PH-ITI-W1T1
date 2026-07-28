@@ -5,9 +5,32 @@ from datetime import datetime
 from backend.models import Doctor, Patient, Appointment, Notification
 from backend.availability import get_doctor_working_hours, _compute_free_slots
 from backend.email_service import send_appointment_confirmation
+from backend.appointment_numbering import compute_display_appointment_id, compute_seniority_number, compute_mr_number
+from backend.pdf_service import generate_appointment_slip_pdf
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def build_slip_pdf_for_appointment(db: Session, appointment: Appointment, doctor: Doctor, patient: Patient) -> bytes:
+    """
+    Shared by both a fresh booking confirmation and a confirmed transfer's
+    new-appointment confirmation - same slip format either way.
+    """
+    now = datetime.now()
+    return generate_appointment_slip_pdf(
+        doctor_name=f"Dr. {doctor.first_name} {doctor.last_name}",
+        department=doctor.specialty,
+        patient_name=f"{patient.first_name} {patient.last_name}",
+        appointment_date_str=appointment.appointment_time.strftime("%d-%b-%y"),
+        appointment_time_str=appointment.appointment_time.strftime("%I:%M %p"),
+        day_name=appointment.appointment_time.strftime("%A"),
+        seniority_no=compute_seniority_number(db, appointment),
+        mr_no=compute_mr_number(patient),
+        display_appointment_id=compute_display_appointment_id(db, appointment),
+        booking_date_str=(appointment.created_at or now).strftime("%d-%b-%y"),
+        printed_at_str=now.strftime("%d-%b-%y %H:%M"),
+    )
 
 
 def clean_doctor_name(raw: str) -> str:
@@ -86,8 +109,7 @@ def _book_appointment_core(db: Session, doctor: Doctor, patient_id: int, date_ex
     if appointment_datetime < datetime.now():
         return {"success": False, "message": "That date and time is in the past. Please choose a future slot."}
 
-    day_of_week = date_obj.weekday()
-    working = get_doctor_working_hours(doctor.id, day_of_week, db)
+    working = get_doctor_working_hours(doctor.id, date_obj, db)
     if not working:
         return {"success": False, "message": f"Dr. {doctor.first_name} {doctor.last_name} is not working on {date_obj.strftime('%A')}."}
 
@@ -139,7 +161,8 @@ def _book_appointment_core(db: Session, doctor: Doctor, patient_id: int, date_ex
     # or unconfigured mail server must never undo an otherwise-successful
     # booking. send_appointment_confirmation() never raises; it returns
     # False on any failure, which we just note in the response.
-    email_sent = send_appointment_confirmation(patient, doctor, new_app)
+    pdf_bytes = build_slip_pdf_for_appointment(db, new_app, doctor, patient)
+    email_sent = send_appointment_confirmation(patient, doctor, pdf_bytes)
 
     return {
         "success": True,

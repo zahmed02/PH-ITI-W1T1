@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-from backend.models import Appointment, DoctorAvailability
+from backend.models import Appointment, DoctorAvailability, DoctorTimeOff
 
 
 def parse_iso_date(date_str: str):
@@ -35,12 +35,27 @@ def python_weekday_to_db_day(python_weekday: int) -> int:
     return (python_weekday + 1) % 7
 
 
-def get_doctor_working_hours(doctor_id: int, day_of_week: int, db: Session):
+def is_doctor_off_on(doctor_id: int, date, db: Session) -> bool:
+    """True if the doctor has a one-off day-off record for this exact date."""
+    return db.query(DoctorTimeOff).filter(
+        DoctorTimeOff.doctor_id == doctor_id,
+        DoctorTimeOff.off_date == date,
+    ).first() is not None
+
+
+def get_doctor_working_hours(doctor_id: int, date, db: Session):
     """
-    day_of_week: Python's weekday (0=Monday, 6=Sunday). Converted internally
-    to the database's day numbering.
+    Accepts the actual date (a datetime.date), not just a weekday number -
+    a one-off day-off record for THIS SPECIFIC DATE overrides the normal
+    recurring weekly schedule, so we need the real date to check it, not
+    just "which weekday is this". Returns None if the doctor doesn't work
+    this date at all (either no recurring hours for that weekday, or a
+    day-off record exists for it).
     """
-    db_day = python_weekday_to_db_day(day_of_week)
+    if is_doctor_off_on(doctor_id, date, db):
+        return None
+
+    db_day = python_weekday_to_db_day(date.weekday())
     avail = db.query(DoctorAvailability).filter(
         DoctorAvailability.doctor_id == doctor_id,
         DoctorAvailability.day_of_week == db_day
@@ -52,8 +67,7 @@ def get_doctor_working_hours(doctor_id: int, day_of_week: int, db: Session):
 
 def _compute_free_slots(doctor_id: int, date, db: Session, slot_duration: int,
                          preferred_time_range: tuple = None):
-    day_of_week = date.weekday()
-    working = get_doctor_working_hours(doctor_id, day_of_week, db)
+    working = get_doctor_working_hours(doctor_id, date, db)
     if not working:
         return []
 
@@ -138,8 +152,7 @@ def get_schedule_preview(doctor_id: int, week_start_date, db: Session,
     result = {}
     for i in range(num_days):
         date = week_start_date + timedelta(days=i)
-        day_of_week = date.weekday()
-        working = get_doctor_working_hours(doctor_id, day_of_week, db)
+        working = get_doctor_working_hours(doctor_id, date, db)
 
         day_slots = []
         if working:
@@ -175,4 +188,3 @@ def get_schedule_preview(doctor_id: int, week_start_date, db: Session,
         }
 
     return result
-
