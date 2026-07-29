@@ -6,6 +6,7 @@ import Doctors from './pages/Doctors';
 import Appointments from './pages/Appointments';
 import CalendarPage from './pages/CalendarPage';
 import AdminPanel from './pages/AdminPanel';
+import AppointmentSlips from './pages/AppointmentSlips';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import ProtectedRoute from './auth/ProtectedRoute';
@@ -39,6 +40,13 @@ function App() {
           <Route path="doctors" element={<Doctors />} />
           <Route path="appointments" element={<Appointments />} />
           <Route path="calendar" element={<CalendarPage />} />
+
+          {/* Doctor-only - the "3rd menu option": view the same PDF slip
+              patients received, cancel a visit, or transfer a cancelled
+              patient to a colleague. */}
+          <Route element={<ProtectedRoute allow={['doctor']} />}>
+            <Route path="slips" element={<AppointmentSlips />} />
+          </Route>
 
           {/* Admin-only - a logged-in patient/doctor hitting /admin
               directly gets redirected to "/" rather than seeing the page,

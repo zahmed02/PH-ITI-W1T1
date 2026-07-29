@@ -1,11 +1,11 @@
 // src/pages/CalendarPage.tsx
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { getDoctors } from '../api/client';
+import { motion, AnimatePresence } from 'framer-motion';
+import { getDoctors, setDoctorDayOff, listDoctorDaysOff } from '../api/client';
 import Calendar from '../components/Calendar';
 import BookingCalendar from '../components/BookingCalendar';
 import { useAuth } from '../auth/AuthContext';
-import { motion } from 'framer-motion';
 
 export default function CalendarPage() {
   const { user } = useAuth();
@@ -25,6 +25,15 @@ export default function CalendarPage() {
     const diff = now.getDate() - day + (day === 0 ? -6 : 1);
     return new Date(now.setDate(diff));
   });
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Day-off dialog state (doctor only)
+  const [dayOffOpen, setDayOffOpen] = useState(false);
+  const [dayOffDate, setDayOffDate] = useState('');
+  const [dayOffReason, setDayOffReason] = useState('');
+  const [dayOffSubmitting, setDayOffSubmitting] = useState(false);
+  const [dayOffMessage, setDayOffMessage] = useState<string | null>(null);
+  const [upcomingDaysOff, setUpcomingDaysOff] = useState<{ date: string; reason: string | null }[]>([]);
 
   useEffect(() => {
     if (!isDoctorLockedToSelf) {
@@ -37,6 +46,12 @@ export default function CalendarPage() {
     const id = searchParams.get('doctorId');
     if (id) setSelectedDoctor(Number(id));
   }, [searchParams, isDoctorLockedToSelf]);
+
+  useEffect(() => {
+    if (lockedDoctorId) {
+      listDoctorDaysOff(lockedDoctorId).then(setUpcomingDaysOff).catch(() => {});
+    }
+  }, [lockedDoctorId, refreshKey]);
 
   const goToPreviousWeek = () => {
     const newDate = new Date(weekStart);
@@ -64,6 +79,25 @@ export default function CalendarPage() {
   // free/busy view instead - they should never see another patient's name.
   const showRealCalendar = user?.role === 'doctor' || user?.role === 'admin';
 
+  const submitDayOff = async () => {
+    if (!lockedDoctorId || !dayOffDate) return;
+    setDayOffSubmitting(true);
+    setDayOffMessage(null);
+    try {
+      const result = await setDoctorDayOff(lockedDoctorId, dayOffDate, dayOffReason || undefined);
+      setDayOffMessage(result.message);
+      setDayOffDate('');
+      setDayOffReason('');
+      setRefreshKey((k) => k + 1); // refresh the calendar grid + days-off list
+    } catch (err: any) {
+      setDayOffMessage(err?.response?.data?.detail || 'Could not set that day off.');
+    } finally {
+      setDayOffSubmitting(false);
+    }
+  };
+
+  const todayISO = new Date().toISOString().split('T')[0];
+
   return (
     <div>
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
@@ -71,14 +105,32 @@ export default function CalendarPage() {
           <h1 className="text-3xl font-bold text-primary">{pageTitle}</h1>
           <p className="text-sm text-on-surface-variant">{pageSubtitle}</p>
         </div>
-        <div className="flex items-center gap-2 bg-surface-container-high p-1 rounded-lg border border-outline-variant shadow-sm">
-          <button onClick={goToPreviousWeek} className="p-1.5 hover:bg-surface-container-highest rounded transition-colors material-symbols-outlined text-sm">chevron_left</button>
-          <span className="px-3 text-sm font-bold text-on-surface">
-            {weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-          </span>
-          <button onClick={goToNextWeek} className="p-1.5 hover:bg-surface-container-highest rounded transition-colors material-symbols-outlined text-sm">chevron_right</button>
+        <div className="flex items-center gap-3">
+          {isDoctorLockedToSelf && (
+            <button
+              onClick={() => setDayOffOpen(true)}
+              className="px-3 py-1.5 rounded-lg border border-outline-variant text-sm hover:bg-surface-container-low flex items-center gap-1.5"
+            >
+              <span className="material-symbols-outlined text-sm">event_busy</span>
+              Take a Day Off
+            </button>
+          )}
+          <div className="flex items-center gap-2 bg-surface-container-high p-1 rounded-lg border border-outline-variant shadow-sm">
+            <button onClick={goToPreviousWeek} className="p-1.5 hover:bg-surface-container-highest rounded transition-colors material-symbols-outlined text-sm">chevron_left</button>
+            <span className="px-3 text-sm font-bold text-on-surface">
+              {weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+            </span>
+            <button onClick={goToNextWeek} className="p-1.5 hover:bg-surface-container-highest rounded transition-colors material-symbols-outlined text-sm">chevron_right</button>
+          </div>
         </div>
       </div>
+
+      {isDoctorLockedToSelf && upcomingDaysOff.length > 0 && (
+        <div className="mb-4 p-3 bg-surface-container-low rounded-lg border border-outline-variant text-xs text-on-surface-variant">
+          <span className="font-medium text-primary">Upcoming days off:</span>{' '}
+          {upcomingDaysOff.map((d) => d.date).join(', ')}
+        </div>
+      )}
 
       {!isDoctorLockedToSelf && (
         <div className="flex flex-wrap items-center gap-4 mb-6">
@@ -118,9 +170,9 @@ export default function CalendarPage() {
           </div>
 
           {showRealCalendar ? (
-            <Calendar doctorId={selectedDoctor} weekStart={weekStart} />
+            <Calendar key={refreshKey} doctorId={selectedDoctor} weekStart={weekStart} />
           ) : (
-            <BookingCalendar doctorId={selectedDoctor} weekStart={weekStart} />
+            <BookingCalendar key={refreshKey} doctorId={selectedDoctor} weekStart={weekStart} />
           )}
 
           {showRealCalendar && (
@@ -161,6 +213,71 @@ export default function CalendarPage() {
             : 'Please select a doctor to view their availability.'}
         </div>
       )}
+
+      {/* Day off dialog */}
+      <AnimatePresence>
+        {dayOffOpen && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => !dayOffSubmitting && setDayOffOpen(false)}
+          >
+            <motion.div
+              className="bg-white rounded-xl shadow-lg p-6 max-w-sm w-full"
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-lg font-bold text-primary mb-2">Take a Day Off</h3>
+              <p className="text-sm text-on-surface-variant mb-4">
+                Any existing appointments on that date will be cancelled automatically and each patient will be emailed.
+              </p>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs font-medium text-on-surface-variant block mb-1">Date</label>
+                  <input
+                    type="date"
+                    min={todayISO}
+                    value={dayOffDate}
+                    onChange={(e) => setDayOffDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-outline-variant bg-surface-bright text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-on-surface-variant block mb-1">Reason (optional)</label>
+                  <input
+                    type="text"
+                    value={dayOffReason}
+                    onChange={(e) => setDayOffReason(e.target.value)}
+                    placeholder="e.g. Personal leave"
+                    className="w-full px-3 py-2 rounded-lg border border-outline-variant bg-surface-bright text-sm"
+                  />
+                </div>
+              </div>
+              {dayOffMessage && <p className="text-sm text-secondary mt-3">{dayOffMessage}</p>}
+              <div className="flex gap-2 mt-4">
+                <button
+                  onClick={() => setDayOffOpen(false)}
+                  disabled={dayOffSubmitting}
+                  className="flex-1 py-2 rounded-lg border border-outline-variant text-on-surface-variant hover:bg-surface-container-low disabled:opacity-60"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={submitDayOff}
+                  disabled={dayOffSubmitting || !dayOffDate}
+                  className="flex-1 py-2 rounded-lg bg-primary text-white hover:bg-primary/90 disabled:opacity-60"
+                >
+                  {dayOffSubmitting ? 'Saving...' : 'Confirm'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

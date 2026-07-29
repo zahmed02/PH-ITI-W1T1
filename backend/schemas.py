@@ -244,3 +244,62 @@ class NotificationOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# -------------------- CANCELLATION / DAY OFF / TRANSFERS --------------------
+
+class CancelAppointmentRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+class CancelAppointmentResult(BaseModel):
+    success: bool
+    message: str
+    appointment_id: Optional[int] = None
+    cancellation_email_sent: Optional[bool] = None
+
+
+class DayOffRequest(BaseModel):
+    date: str  # ISO date, YYYY-MM-DD
+    reason: Optional[str] = None
+
+
+class DayOffResult(BaseModel):
+    success: bool
+    message: str
+    cancelled_appointment_ids: Optional[List[int]] = None
+
+
+class ProposeTransferRequest(BaseModel):
+    to_doctor_id: int
+
+
+class TransferActionResult(BaseModel):
+    success: bool
+    message: str
+    transfer_id: Optional[int] = None
+    new_appointment_id: Optional[int] = None
+    confirmation_email_sent: Optional[bool] = None
+
+
+class TransferOut(BaseModel):
+    id: int
+    appointment_id: int
+    from_doctor_id: int
+    from_doctor_name: str
+    to_doctor_id: int
+    status: str
+    created_at: datetime
+    # Details about the appointment being transferred, so the receiving
+    # doctor can decide without an extra lookup.
+    patient_name: str
+    appointment_time: datetime
+
+
+class AppointmentSlipRow(BaseModel):
+    """One row in a doctor's 'Appointment Slips' list view."""
+    id: int
+    display_appointment_id: str
+    patient_name: str
+    appointment_time: datetime
+    status: str

@@ -57,7 +57,7 @@ export default function NotificationBell() {
       }
     }
     setOpen(false);
-    navigate('/calendar');
+    navigate('/slips');
   };
 
   const timeAgo = (iso: string) => {

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Optional, List
@@ -7,9 +8,11 @@ import shutil
 from datetime import datetime
 
 from backend.database import get_db
-from backend.models import Doctor, Patient, DoctorAvailability, Appointment, Review, User, Notification
+from backend.models import Doctor, Patient, DoctorAvailability, Appointment, Review, User, Notification, DoctorTimeOff, AppointmentTransfer
 from backend.availability import get_schedule_preview, parse_iso_date
-from backend.booking import book_appointment_by_id
+from backend.booking import book_appointment_by_id, build_slip_pdf_for_appointment
+from backend.appointment_actions import cancel_appointment, set_doctor_day_off, propose_transfer, confirm_transfer, decline_transfer
+from backend.appointment_numbering import compute_display_appointment_id
 from backend.schemas import (
     DoctorResponse, DoctorWithDetails,
     PatientResponse,
@@ -17,6 +20,10 @@ from backend.schemas import (
     ReviewCreate, ReviewResponse,
     BookAppointmentRequest, BookAppointmentResult,
     NotificationOut,
+    CancelAppointmentRequest, CancelAppointmentResult,
+    DayOffRequest, DayOffResult,
+    ProposeTransferRequest, TransferActionResult, TransferOut,
+    AppointmentSlipRow,
 )
 from backend.auth import (
     get_current_user,
@@ -360,3 +367,231 @@ def mark_notification_read(
     notification.is_read = True
     db.commit()
     return {"message": "Marked as read."}
+
+
+# -------------------- APPOINTMENT SLIP (PDF) --------------------
+
+def _ensure_can_access_appointment(current_user: User, appointment: Appointment):
+    """Admin, the owning doctor, or the owning patient may access a given appointment's details/PDF."""
+    if current_user.role == "admin":
+        return
+    if current_user.role == "doctor" and current_user.doctor_id == appointment.doctor_id:
+        return
+    if current_user.role == "patient" and current_user.patient_id == appointment.patient_id:
+        return
+    raise HTTPException(status_code=403, detail="You do not have permission to view this appointment.")
+
+
+@router.get("/appointments/{appointment_id}/slip.pdf")
+def get_appointment_slip_pdf(
+    appointment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Streams the same PDF slip that was emailed on booking. Available to
+    the owning patient, the owning doctor (this is the doctor's "3rd menu
+    option" view), or an admin.
+    """
+    appointment = db.query(Appointment).filter(Appointment.id == appointment_id).first()
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    _ensure_can_access_appointment(current_user, appointment)
+
+    doctor = db.query(Doctor).filter(Doctor.id == appointment.doctor_id).first()
+    patient = db.query(Patient).filter(Patient.id == appointment.patient_id).first()
+    if not doctor or not patient:
+        raise HTTPException(status_code=404, detail="Related doctor/patient record not found")
+
+    pdf_bytes = build_slip_pdf_for_appointment(db, appointment, doctor, patient)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="appointment_slip_{appointment_id}.pdf"'},
+    )
+
+
+@router.get("/doctors/{doctor_id}/slips", response_model=List[AppointmentSlipRow])
+def list_doctor_slips(
+    doctor_id: int,
+    upcoming_only: bool = True,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Lists a doctor's own appointments for the 'Appointment Slips' menu page - the doctor themselves or an admin."""
+    ensure_can_access_doctor_data(current_user, doctor_id)
+
+    query = db.query(Appointment).filter(Appointment.doctor_id == doctor_id)
+    if upcoming_only:
+        query = query.filter(Appointment.appointment_time >= datetime.now())
+    appointments = query.order_by(Appointment.appointment_time).limit(100).all()
+
+    rows = []
+    for appt in appointments:
+        patient = db.query(Patient).filter(Patient.id == appt.patient_id).first()
+        rows.append(AppointmentSlipRow(
+            id=appt.id,
+            display_appointment_id=compute_display_appointment_id(db, appt),
+            patient_name=f"{patient.first_name} {patient.last_name}" if patient else "Unknown",
+            appointment_time=appt.appointment_time,
+            status=appt.status,
+        ))
+    return rows
+
+
+# -------------------- CANCELLATION --------------------
+
+@router.post("/appointments/{appointment_id}/cancel", response_model=CancelAppointmentResult)
+def cancel_appointment_endpoint(
+    appointment_id: int,
+    payload: CancelAppointmentRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_doctor_or_admin),
+):
+    appointment = db.query(Appointment).filter(Appointment.id == appointment_id).first()
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+
+    # A doctor may only cancel their OWN appointments; admin may cancel any.
+    ensure_can_access_doctor_data(current_user, appointment.doctor_id)
+
+    result = cancel_appointment(db, appointment, reason=payload.reason or "")
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
+
+# -------------------- DAY OFF --------------------
+
+@router.post("/doctors/{doctor_id}/time-off", response_model=DayOffResult)
+def set_day_off_endpoint(
+    doctor_id: int,
+    payload: DayOffRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_doctor_or_admin),
+):
+    """
+    Marks doctor_id unavailable for one date, cancelling (and emailing
+    patients for) any existing bookings that day. The doctor themselves
+    or an admin may call this.
+    """
+    ensure_can_access_doctor_data(current_user, doctor_id)
+
+    off_date = parse_iso_date(payload.date)
+    if not off_date:
+        raise HTTPException(status_code=400, detail="date must be an ISO date (YYYY-MM-DD).")
+    if off_date < datetime.now().date():
+        raise HTTPException(status_code=400, detail="Cannot mark a day off in the past.")
+
+    result = set_doctor_day_off(db, doctor_id, off_date, reason=payload.reason or "")
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
+
+@router.get("/doctors/{doctor_id}/time-off")
+def list_day_off(
+    doctor_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Public (any logged-in role) - patients/admins benefit from seeing a doctor's upcoming days off too."""
+    rows = db.query(DoctorTimeOff).filter(
+        DoctorTimeOff.doctor_id == doctor_id,
+        DoctorTimeOff.off_date >= datetime.now().date(),
+    ).order_by(DoctorTimeOff.off_date).all()
+    return [{"date": r.off_date.isoformat(), "reason": r.reason} for r in rows]
+
+
+# -------------------- TRANSFERS --------------------
+
+@router.post("/appointments/{appointment_id}/transfer", response_model=TransferActionResult)
+def propose_transfer_endpoint(
+    appointment_id: int,
+    payload: ProposeTransferRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_doctor_or_admin),
+):
+    """The (from) doctor proposes transferring a cancelled appointment to a same-specialty colleague."""
+    appointment = db.query(Appointment).filter(Appointment.id == appointment_id).first()
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    ensure_can_access_doctor_data(current_user, appointment.doctor_id)
+
+    from_doctor = db.query(Doctor).filter(Doctor.id == appointment.doctor_id).first()
+    result = propose_transfer(db, appointment, from_doctor, payload.to_doctor_id)
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
+
+@router.get("/appointment-transfers/incoming", response_model=List[TransferOut])
+def list_incoming_transfers(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_doctor_or_admin),
+):
+    """Pending transfer requests addressed TO the current doctor, for them to confirm/decline."""
+    if current_user.role != "doctor" or not current_user.doctor_id:
+        return []
+
+    transfers = db.query(AppointmentTransfer).filter(
+        AppointmentTransfer.to_doctor_id == current_user.doctor_id,
+        AppointmentTransfer.status == "pending",
+    ).order_by(AppointmentTransfer.created_at.desc()).all()
+
+    rows = []
+    for t in transfers:
+        appt = db.query(Appointment).filter(Appointment.id == t.appointment_id).first()
+        from_doc = db.query(Doctor).filter(Doctor.id == t.from_doctor_id).first()
+        patient = db.query(Patient).filter(Patient.id == appt.patient_id).first() if appt else None
+        if not appt or not from_doc or not patient:
+            continue
+        rows.append(TransferOut(
+            id=t.id,
+            appointment_id=t.appointment_id,
+            from_doctor_id=t.from_doctor_id,
+            from_doctor_name=f"Dr. {from_doc.first_name} {from_doc.last_name}",
+            to_doctor_id=t.to_doctor_id,
+            status=t.status,
+            created_at=t.created_at,
+            patient_name=f"{patient.first_name} {patient.last_name}",
+            appointment_time=appt.appointment_time,
+        ))
+    return rows
+
+
+@router.post("/appointment-transfers/{transfer_id}/confirm", response_model=TransferActionResult)
+def confirm_transfer_endpoint(
+    transfer_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_doctor_or_admin),
+):
+    transfer = db.query(AppointmentTransfer).filter(AppointmentTransfer.id == transfer_id).first()
+    if not transfer:
+        raise HTTPException(status_code=404, detail="Transfer not found")
+
+    # Only the RECEIVING doctor (or admin) may confirm it.
+    ensure_can_access_doctor_data(current_user, transfer.to_doctor_id)
+
+    result = confirm_transfer(db, transfer)
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
+
+@router.post("/appointment-transfers/{transfer_id}/decline", response_model=TransferActionResult)
+def decline_transfer_endpoint(
+    transfer_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_doctor_or_admin),
+):
+    transfer = db.query(AppointmentTransfer).filter(AppointmentTransfer.id == transfer_id).first()
+    if not transfer:
+        raise HTTPException(status_code=404, detail="Transfer not found")
+
+    ensure_can_access_doctor_data(current_user, transfer.to_doctor_id)
+
+    result = decline_transfer(db, transfer)
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result

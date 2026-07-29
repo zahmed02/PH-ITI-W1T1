@@ -58,6 +58,12 @@ export default function Layout() {
     label: role === 'doctor' ? 'My Schedule' : role === 'admin' ? 'Calendar' : 'My Appointments',
     icon: 'calendar_month',
   });
+  if (role === 'doctor') {
+    // The doctor's "3rd menu option" - view the same PDF slip their
+    // patients received, cancel a visit, or transfer a cancelled patient
+    // to a same-department colleague.
+    navItems.push({ to: '/slips', label: 'Appointment Slips', icon: 'receipt_long' });
+  }
   if (role === 'admin') {
     navItems.push({ to: '/admin', label: 'Admin Panel', icon: 'admin_panel_settings' });
   }

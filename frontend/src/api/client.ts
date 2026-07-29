@@ -142,4 +142,71 @@ export const getMyNotifications = (unreadOnly = false): Promise<NotificationRow[
 export const markNotificationRead = (notificationId: number) =>
   api.post(`/notifications/${notificationId}/read`).then(res => res.data);
 
+// -------------------- Appointment slips (PDF) --------------------
+
+// Builds the URL for viewing/downloading the slip - the browser's own
+// <a>/window.open request carries the auth header via... actually it
+// does NOT (plain navigation can't set headers), so slip viewing goes
+// through fetchSlipPdfBlob() below instead, which uses the authenticated
+// axios instance and hands back an object URL.
+export const fetchSlipPdfBlob = (appointmentId: number): Promise<string> =>
+  api.get(`/appointments/${appointmentId}/slip.pdf`, { responseType: 'blob' })
+    .then(res => URL.createObjectURL(res.data));
+
+export interface AppointmentSlipRow {
+  id: number;
+  display_appointment_id: string;
+  patient_name: string;
+  appointment_time: string;
+  status: string;
+}
+
+export const getDoctorSlips = (doctorId: number, upcomingOnly = true): Promise<AppointmentSlipRow[]> =>
+  api.get(`/doctors/${doctorId}/slips`, { params: { upcoming_only: upcomingOnly } }).then(res => res.data);
+
+// -------------------- Cancellation --------------------
+
+export interface ActionResult {
+  success: boolean;
+  message: string;
+  [key: string]: any;
+}
+
+export const cancelAppointment = (appointmentId: number, reason?: string): Promise<ActionResult> =>
+  api.post(`/appointments/${appointmentId}/cancel`, { reason }).then(res => res.data);
+
+// -------------------- Day off --------------------
+
+export const setDoctorDayOff = (doctorId: number, date: string, reason?: string): Promise<ActionResult> =>
+  api.post(`/doctors/${doctorId}/time-off`, { date, reason }).then(res => res.data);
+
+export const listDoctorDaysOff = (doctorId: number): Promise<{ date: string; reason: string | null }[]> =>
+  api.get(`/doctors/${doctorId}/time-off`).then(res => res.data);
+
+// -------------------- Transfers --------------------
+
+export const proposeTransfer = (appointmentId: number, toDoctorId: number): Promise<ActionResult> =>
+  api.post(`/appointments/${appointmentId}/transfer`, { to_doctor_id: toDoctorId }).then(res => res.data);
+
+export interface IncomingTransfer {
+  id: number;
+  appointment_id: number;
+  from_doctor_id: number;
+  from_doctor_name: string;
+  to_doctor_id: number;
+  status: string;
+  created_at: string;
+  patient_name: string;
+  appointment_time: string;
+}
+
+export const getIncomingTransfers = (): Promise<IncomingTransfer[]> =>
+  api.get('/appointment-transfers/incoming').then(res => res.data);
+
+export const confirmTransfer = (transferId: number): Promise<ActionResult> =>
+  api.post(`/appointment-transfers/${transferId}/confirm`).then(res => res.data);
+
+export const declineTransfer = (transferId: number): Promise<ActionResult> =>
+  api.post(`/appointment-transfers/${transferId}/decline`).then(res => res.data);
+
 export default api;
