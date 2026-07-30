@@ -2,9 +2,11 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import { MdChevronLeft, MdChevronRight, MdEventBusy, MdEventAvailable, MdAssignment, MdGroups } from 'react-icons/md';
 import { getDoctors, setDoctorDayOff, listDoctorDaysOff } from '../api/client';
 import Calendar from '../components/Calendar';
 import BookingCalendar from '../components/BookingCalendar';
+import CalendarLegend from '../components/CalendarLegend';
 import { useAuth } from '../auth/AuthContext';
 
 export default function CalendarPage() {
@@ -100,36 +102,51 @@ export default function CalendarPage() {
 
   return (
     <div>
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
+      <motion.div
+        className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6"
+        initial={{ opacity: 0, y: -8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+      >
         <div>
           <h1 className="text-3xl font-bold text-primary">{pageTitle}</h1>
           <p className="text-sm text-on-surface-variant">{pageSubtitle}</p>
         </div>
         <div className="flex items-center gap-3">
           {isDoctorLockedToSelf && (
-            <button
+            <motion.button
               onClick={() => setDayOffOpen(true)}
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.97 }}
               className="px-3 py-1.5 rounded-lg border border-outline-variant text-sm hover:bg-surface-container-low flex items-center gap-1.5"
             >
-              <span className="material-symbols-outlined text-sm">event_busy</span>
+              <MdEventBusy className="text-sm" />
               Take a Day Off
-            </button>
+            </motion.button>
           )}
           <div className="flex items-center gap-2 bg-surface-container-high p-1 rounded-lg border border-outline-variant shadow-sm">
-            <button onClick={goToPreviousWeek} className="p-1.5 hover:bg-surface-container-highest rounded transition-colors material-symbols-outlined text-sm">chevron_left</button>
+            <button onClick={goToPreviousWeek} className="p-1.5 hover:bg-surface-container-highest rounded transition-colors flex items-center justify-center">
+              <MdChevronLeft className="text-sm" />
+            </button>
             <span className="px-3 text-sm font-bold text-on-surface">
               {weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
             </span>
-            <button onClick={goToNextWeek} className="p-1.5 hover:bg-surface-container-highest rounded transition-colors material-symbols-outlined text-sm">chevron_right</button>
+            <button onClick={goToNextWeek} className="p-1.5 hover:bg-surface-container-highest rounded transition-colors flex items-center justify-center">
+              <MdChevronRight className="text-sm" />
+            </button>
           </div>
         </div>
-      </div>
+      </motion.div>
 
       {isDoctorLockedToSelf && upcomingDaysOff.length > 0 && (
-        <div className="mb-4 p-3 bg-surface-container-low rounded-lg border border-outline-variant text-xs text-on-surface-variant">
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="mb-4 p-3 bg-surface-container-low rounded-lg border border-outline-variant text-xs text-on-surface-variant"
+        >
           <span className="font-medium text-primary">Upcoming days off:</span>{' '}
           {upcomingDaysOff.map((d) => d.date).join(', ')}
-        </div>
+        </motion.div>
       )}
 
       {!isDoctorLockedToSelf && (
@@ -154,20 +171,7 @@ export default function CalendarPage() {
 
       {selectedDoctor ? (
         <>
-          <div className="flex flex-wrap gap-4 text-xs mb-3 p-3 bg-surface-container-low rounded-lg border border-outline-variant">
-            <span className="flex items-center gap-2">
-              <span className="inline-block w-4 h-4 bg-secondary-container border border-secondary rounded"></span>
-              Available
-            </span>
-            <span className="flex items-center gap-2">
-              <span className="inline-block w-4 h-4 bg-tertiary-container/20 border-l-2 border-tertiary rounded"></span>
-              Booked
-            </span>
-            <span className="flex items-center gap-2">
-              <span className="inline-block w-4 h-4 bg-surface-container-highest/50 border border-outline-variant rounded"></span>
-              Not Working
-            </span>
-          </div>
+          <CalendarLegend />
 
           {showRealCalendar ? (
             <Calendar key={refreshKey} doctorId={selectedDoctor} weekStart={weekStart} />
@@ -178,9 +182,9 @@ export default function CalendarPage() {
           {showRealCalendar && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
               {[
-                { icon: 'event_available', label: 'Available Slots', color: 'bg-secondary-container' },
-                { icon: 'patient_list', label: 'Pending Approvals', color: 'bg-tertiary-container/20' },
-                { icon: 'assignment', label: 'Lab Results', color: 'bg-primary-container/20' },
+                { Icon: MdEventAvailable, label: 'Available Slots', bg: 'bg-secondary-container', fg: 'text-on-secondary-container' },
+                { Icon: MdGroups, label: 'Pending Approvals', bg: 'bg-tertiary-container/25', fg: 'text-tertiary' },
+                { Icon: MdAssignment, label: 'Lab Results', bg: 'bg-primary-container/20', fg: 'text-primary' },
               ].map((stat, i) => (
                 <motion.div
                   key={i}
@@ -190,12 +194,12 @@ export default function CalendarPage() {
                   transition={{ delay: 0.1 + i * 0.05 }}
                   whileHover={{
                     y: -4,
-                    boxShadow: '0 12px 40px rgba(0,0,0,0.08)',
+                    boxShadow: '0 12px 40px rgba(140,0,33,0.10)',
                     transition: { type: 'spring', stiffness: 300, damping: 15 },
                   }}
                 >
-                  <div className={`h-10 w-10 rounded-full ${stat.color} flex items-center justify-center text-on-secondary-container`}>
-                    <span className="material-symbols-outlined">{stat.icon}</span>
+                  <div className={`h-10 w-10 rounded-full ${stat.bg} flex items-center justify-center ${stat.fg}`}>
+                    <stat.Icon className="text-xl" />
                   </div>
                   <div>
                     <p className="text-xs text-on-surface-variant">{stat.label}</p>
@@ -231,7 +235,9 @@ export default function CalendarPage() {
               exit={{ scale: 0.95, opacity: 0 }}
               onClick={(e) => e.stopPropagation()}
             >
-              <h3 className="text-lg font-bold text-primary mb-2">Take a Day Off</h3>
+              <h3 className="text-lg font-bold text-primary mb-2 flex items-center gap-2">
+                <MdEventBusy /> Take a Day Off
+              </h3>
               <p className="text-sm text-on-surface-variant mb-4">
                 Any existing appointments on that date will be cancelled automatically and each patient will be emailed.
               </p>
@@ -266,13 +272,15 @@ export default function CalendarPage() {
                 >
                   Close
                 </button>
-                <button
+                <motion.button
                   onClick={submitDayOff}
                   disabled={dayOffSubmitting || !dayOffDate}
+                  whileHover={!dayOffSubmitting && dayOffDate ? { scale: 1.02 } : undefined}
+                  whileTap={!dayOffSubmitting && dayOffDate ? { scale: 0.97 } : undefined}
                   className="flex-1 py-2 rounded-lg bg-primary text-white hover:bg-primary/90 disabled:opacity-60"
                 >
                   {dayOffSubmitting ? 'Saving...' : 'Confirm'}
-                </button>
+                </motion.button>
               </div>
             </motion.div>
           </motion.div>

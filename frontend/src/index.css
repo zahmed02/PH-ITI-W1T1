@@ -40,3 +40,17 @@
 .doctor-card-shadow:hover {
   box-shadow: 0px 10px 25px rgba(0, 0, 0, 0.1);
 }
+
+/* Diagonal-hatch texture for the "not working" calendar state - gives it
+   a distinct visual TEXTURE, not just a flat color, so the three slot
+   states (available / booked / not-working) are distinguishable even for
+   colorblind users, not just by hue. */
+.bg-diagonal-hatch {
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(83, 67, 66, 0.08) 0px,
+    rgba(83, 67, 66, 0.08) 2px,
+    transparent 2px,
+    transparent 8px
+  );
+}

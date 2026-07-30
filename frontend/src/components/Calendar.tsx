@@ -1,5 +1,9 @@
 import { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import { MdSchedule, MdAccountCircle } from 'react-icons/md';
 import { getAppointmentsByDoctor, getDoctorAvailability, getDoctor } from '../api/client';
+import { SLOT_STATUS } from './calendarStatus';
+import type { SlotStatus } from './calendarStatus';
 
 interface CalendarProps {
   doctorId: number;
@@ -31,6 +35,7 @@ export default function Calendar({ doctorId, weekStart }: CalendarProps) {
 
         const occupied: any = {};
         appts.forEach((app: any) => {
+          if (app.status === 'cancelled') return;
           const date = new Date(app.appointment_time);
           const dateStr = date.toDateString();
           const hourStr = date.getHours() + ':00';
@@ -51,13 +56,13 @@ export default function Calendar({ doctorId, weekStart }: CalendarProps) {
           timeSlots.forEach((hour) => {
             const hourNum = parseInt(hour.split(':')[0]);
             if (!isWorking) {
-              daySlots[hour] = { status: 'not-working' };
+              daySlots[hour] = { status: 'not-working' as SlotStatus };
             } else if (hourNum < startHour || hourNum >= endHour) {
-              daySlots[hour] = { status: 'off-duty' };
+              daySlots[hour] = { status: 'not-working' as SlotStatus };
             } else if (occupied[dateStr] && occupied[dateStr][hour]) {
-              daySlots[hour] = { status: 'occupied', patientName: occupied[dateStr][hour].patientName };
+              daySlots[hour] = { status: 'booked' as SlotStatus, patientName: occupied[dateStr][hour].patientName };
             } else {
-              daySlots[hour] = { status: 'available' };
+              daySlots[hour] = { status: 'available' as SlotStatus };
             }
           });
           slotMap[dateStr] = daySlots;
@@ -70,39 +75,31 @@ export default function Calendar({ doctorId, weekStart }: CalendarProps) {
       }
     };
     fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doctorId, weekStart]);
 
-  if (loading) return <div className="text-center py-8">Loading calendar...</div>;
-
-  const getCellContent = (status: string, patientName?: string) => {
-    if (status === 'available') return 'A';
-    if (status === 'not-working' || status === 'off-duty') return 'NW';
-    if (status === 'occupied') return patientName || 'Booked';
-    return '';
-  };
-
-  const getCellClass = (status: string) => {
-    switch (status) {
-      case 'available': return 'bg-secondary-container/10 group cursor-pointer hover:bg-secondary-container/20 transition-all';
-      case 'occupied': return 'bg-tertiary-container/10 border-l-2 border-tertiary';
-      case 'not-working':
-      case 'off-duty': return 'bg-surface-container-highest/20';
-      default: return '';
-    }
-  };
-
-  const getCellStyle = (status: string) => {
-    if (status === 'available') return 'bg-secondary-container border border-secondary text-on-secondary-container shadow-sm flex flex-col justify-between p-1 h-full w-full rounded text-xs';
-    if (status === 'occupied') return 'flex flex-col justify-center p-1 h-full w-full rounded text-xs text-on-surface';
-    if (status === 'not-working' || status === 'off-duty') return 'flex items-center justify-center h-full w-full text-on-surface-variant/50 text-xs';
-    return '';
-  };
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16 text-on-surface-variant gap-2">
+        <motion.span
+          animate={{ rotate: 360 }}
+          transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
+          className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full"
+        />
+        Loading calendar...
+      </div>
+    );
+  }
 
   return (
     <div>
-      {/* ✅ Doctor Image & Info */}
       {doctor && (
-        <div className="flex items-center gap-4 mb-4 p-4 bg-white/80 rounded-xl border border-outline-variant shadow-sm">
+        <motion.div
+          className="flex items-center gap-4 mb-4 p-4 bg-white/80 rounded-xl border border-outline-variant shadow-sm"
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+        >
           <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-primary/20 flex-shrink-0">
             {doctor.profile_image ? (
               <img
@@ -112,7 +109,7 @@ export default function Calendar({ doctorId, weekStart }: CalendarProps) {
               />
             ) : (
               <div className="w-full h-full bg-surface-container flex items-center justify-center">
-                <span className="material-symbols-outlined text-3xl text-primary/40">account_circle</span>
+                <MdAccountCircle className="text-3xl text-primary/40" />
               </div>
             )}
           </div>
@@ -120,14 +117,14 @@ export default function Calendar({ doctorId, weekStart }: CalendarProps) {
             <h3 className="font-semibold text-lg text-primary">Dr. {doctor.first_name} {doctor.last_name}</h3>
             <p className="text-sm text-on-surface-variant">{doctor.specialty} • {doctor.years_of_experience} years</p>
           </div>
-        </div>
+        </motion.div>
       )}
 
       <div className="bg-white/90 backdrop-blur-sm rounded-xl border border-outline-variant shadow-lg overflow-hidden">
         {/* Header */}
         <div className="grid grid-cols-6 bg-surface-container border-b border-outline-variant">
-          <div className="p-2 text-center border-r border-outline-variant bg-surface-container-high">
-            <span className="material-symbols-outlined text-outline text-sm">schedule</span>
+          <div className="p-2 text-center border-r border-outline-variant bg-surface-container-high flex items-center justify-center">
+            <MdSchedule className="text-outline text-sm" />
           </div>
           {days.map((day, i) => (
             <div key={i} className={`p-2 text-center ${i < days.length - 1 ? 'border-r border-outline-variant' : ''}`}>
@@ -143,42 +140,51 @@ export default function Calendar({ doctorId, weekStart }: CalendarProps) {
 
         {/* Body */}
         <div className="overflow-y-auto max-h-[500px] relative">
-          {timeSlots.map((slot) => (
-            <div key={slot} className="grid grid-cols-6 border-b border-outline-variant">
+          {timeSlots.map((slot, rowIndex) => (
+            <motion.div
+              key={slot}
+              className="grid grid-cols-6 border-b border-outline-variant"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.2, delay: Math.min(rowIndex * 0.02, 0.3) }}
+            >
               <div className="flex items-center justify-center border-r border-outline-variant bg-surface-container-low text-on-surface-variant text-xs p-1">
                 {slot}
               </div>
               {days.map((day) => {
                 const dateStr = day.toDateString();
                 const info = slots[dateStr]?.[slot];
-                const status = info?.status || 'not-working';
+                const status: SlotStatus = info?.status || 'not-working';
                 const patientName = info?.patientName;
-                const content = getCellContent(status, patientName);
-                const cellClass = getCellClass(status);
-                const cellStyle = getCellStyle(status);
+                const s = SLOT_STATUS[status];
+                const Icon = s.icon;
                 return (
-                  <div key={day.toISOString() + slot} className={`p-0.5 border-r border-outline-variant ${cellClass}`}>
-                    <div className={cellStyle}>
+                  <div key={day.toISOString() + slot} className="p-0.5 border-r border-outline-variant">
+                    <motion.div
+                      className={`flex flex-col items-center justify-center gap-0.5 h-full w-full rounded text-xs p-1 ${s.cellClass} ${s.textClass}`}
+                      whileHover={status !== 'not-working' ? { scale: 1.03 } : undefined}
+                      transition={{ type: 'spring', stiffness: 400, damping: 20 }}
+                    >
                       {status === 'available' && (
                         <>
-                          <span className="font-bold">A</span>
-                          <span className="material-symbols-outlined text-xs">add_circle</span>
+                          <Icon className="text-sm" />
+                          <span className="font-bold text-[10px]">Open</span>
                         </>
                       )}
-                      {status === 'occupied' && (
+                      {status === 'booked' && (
                         <>
-                          <span className="font-bold text-tertiary truncate">{patientName}</span>
-                          <span className="text-[8px] opacity-60">Booked</span>
+                          <span className="font-bold truncate w-full text-center leading-tight">{patientName}</span>
+                          <span className="text-[9px] opacity-80 flex items-center gap-0.5">
+                            <Icon className="text-[10px]" /> Booked
+                          </span>
                         </>
                       )}
-                      {(status === 'not-working' || status === 'off-duty') && (
-                        <span className="font-bold">NW</span>
-                      )}
-                    </div>
+                      {status === 'not-working' && <Icon className="text-sm opacity-70" />}
+                    </motion.div>
                   </div>
                 );
               })}
-            </div>
+            </motion.div>
           ))}
         </div>
       </div>
