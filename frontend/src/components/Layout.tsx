@@ -268,7 +268,7 @@ export default function Layout() {
             whileHover={{ scale: 1.02 }}
             transition={{ type: 'spring', stiffness: 300 }}
           >
-            © 2024 Stellaris General Hospital. Providing trusted care.
+            © 2026 Stellaris General Hospital. Providing trusted care.
           </motion.p>
           <div className="flex flex-wrap gap-4 text-sm text-on-surface-variant">
             {['Contact Us', 'Emergency Services', 'Privacy Policy', 'Terms of Service'].map((item) => (
