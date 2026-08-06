@@ -394,7 +394,8 @@ def build_system_prompt(language: str) -> str:
     today = datetime.now()
     lang_instruction = {
         "ur": "The user is writing in Urdu script. Respond in Urdu.",
-        "en": "Respond in English, unless the user writes in Roman Urdu, in which case respond in Roman Urdu.",
+        "roman_ur": "The user is writing Roman Urdu (Urdu in Latin script). Respond in Roman Urdu, matching their script.",
+        "en": "Respond in English.",
     }.get(language, "Respond in the same language and script the user used.")
 
     return f"""You are the AI medical assistant for Stellaris General Hospital.

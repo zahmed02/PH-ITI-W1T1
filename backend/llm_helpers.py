@@ -1,9 +1,11 @@
+# backend/llm_helpers.py
 import os
 import logging
-import re
 import time
 from groq import Groq
 from dotenv import load_dotenv
+
+from backend.nlp_service import detect_language as _detect_language
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -13,8 +15,14 @@ CHAT_MODEL = "llama-3.1-8b-instant"
 
 
 def detect_language(text: str) -> str:
-    urdu_chars = re.compile(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]')
-    return "ur" if urdu_chars.search(text) else "en"
+    """
+    Returns "ur" (native Urdu script), "roman_ur" (Roman-script Urdu), or
+    "en" (English). Actual classification logic lives in
+    backend/nlp_service.py - this is kept as a thin re-export so existing
+    callers (`from backend.llm_helpers import detect_language`) don't
+    need to change their import.
+    """
+    return _detect_language(text)
 
 
 def get_chat_completion(messages: list, tools: list = None, tool_choice: str = "auto",
