@@ -1,18 +1,20 @@
 // frontend/src/pages/AdminPanel.tsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { FormEvent } from 'react';
 import { motion } from 'framer-motion';
 import {
   adminListUsers, adminCreateDoctor, adminCreateAdmin, adminCreatePatient,
 } from '../api/auth';
-import type { AdminUserRow } from '../api/auth';
+import type { AdminUserRow, CreateDoctorPayload } from '../api/auth';
 import {
-  adminListPatients, getDoctors, getDoctorSchedulePreview, bookAppointment,
+  adminListPatients, getDoctors, getDoctorSchedulePreview, bookAppointment, uploadDoctorImage,
 } from '../api/client';
 import type { PatientRow, BookAppointmentResult } from '../api/client';
 import { AnimatedButton } from '../components/AnimatedComponents';
+import { toLocalISODate, todayLocalISODate, mondayOfLocalWeek } from '../utils/dateUtils';
 
 const SPECIALTIES = ['Cardiology', 'Neurology', 'Pediatrics', 'Orthopedics', 'Dermatology'];
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 type Tab = 'users' | 'new-doctor' | 'new-patient' | 'new-admin' | 'book';
 
@@ -129,6 +131,34 @@ function CreateDoctorForm({ onCreated }: { onCreated: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [availability, setAvailability] = useState<{ day_of_week: number; start_time: string; end_time: string }[]>([]);
+
+  const addDefaultAvailability = () => {
+    setAvailability([
+      { day_of_week: 1, start_time: '09:00', end_time: '17:00' },
+      { day_of_week: 2, start_time: '09:00', end_time: '17:00' },
+      { day_of_week: 3, start_time: '09:00', end_time: '17:00' },
+      { day_of_week: 4, start_time: '09:00', end_time: '17:00' },
+      { day_of_week: 5, start_time: '09:00', end_time: '13:00' },
+    ]);
+  };
+
+  const addBlock = () => {
+    setAvailability([...availability, { day_of_week: 1, start_time: '09:00', end_time: '17:00' }]);
+  };
+
+  const updateBlock = (index: number, field: string, value: string | number) => {
+    const updated = [...availability];
+    updated[index] = { ...updated[index], [field]: value };
+    setAvailability(updated);
+  };
+
+  const removeBlock = (index: number) => {
+    setAvailability(availability.filter((_, i) => i !== index));
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -140,7 +170,7 @@ function CreateDoctorForm({ onCreated }: { onCreated: () => void }) {
     }
     setSubmitting(true);
     try {
-      const created = await adminCreateDoctor({
+      const payload: CreateDoctorPayload = {
         username: username.trim(),
         password,
         first_name: firstName.trim(),
@@ -148,8 +178,25 @@ function CreateDoctorForm({ onCreated }: { onCreated: () => void }) {
         specialty,
         years_of_experience: years,
         bio: bio.trim() || undefined,
-      });
-      setSuccess(`Doctor account "${created.username}" created. Share the username/password with them securely.`);
+        availability: availability.length > 0 ? availability : undefined,
+      };
+      const created = await adminCreateDoctor(payload);
+
+      // If an image was selected, upload it now using the created doctor_id
+      if (imageFile && created.doctor_id) {
+        try {
+          await uploadDoctorImage(created.doctor_id, imageFile);
+          setSuccess(`Doctor "${created.username}" created and profile image uploaded successfully.`);
+          setImageFile(null);
+          if (fileInputRef.current) fileInputRef.current.value = '';
+        } catch (imgErr: any) {
+          setSuccess(`Doctor "${created.username}" created, but image upload failed: ${imgErr?.response?.data?.detail || 'Unknown error'}`);
+        }
+      } else {
+        setSuccess(`Doctor account "${created.username}" created. Share the username/password with them securely.`);
+      }
+
+      // Reset fields (keep availability as is, but optionally clear it)
       setUsername(''); setPassword(''); setFirstName(''); setLastName(''); setBio(''); setYears(1);
       onCreated();
     } catch (err: any) {
@@ -162,10 +209,11 @@ function CreateDoctorForm({ onCreated }: { onCreated: () => void }) {
   return (
     <motion.form
       onSubmit={handleSubmit}
-      className="bg-white/90 backdrop-blur-sm rounded-xl border border-outline-variant shadow-sm p-6 max-w-xl space-y-4"
+      className="bg-white/90 backdrop-blur-sm rounded-xl border border-outline-variant shadow-sm p-6 max-w-3xl space-y-4"
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
     >
+      {/* Basic fields (unchanged) */}
       <div className="grid grid-cols-2 gap-3">
         <Field label="First Name" value={firstName} onChange={setFirstName} />
         <Field label="Last Name" value={lastName} onChange={setLastName} />
@@ -206,6 +254,66 @@ function CreateDoctorForm({ onCreated }: { onCreated: () => void }) {
         <Field label="Temporary Password" value={password} onChange={setPassword} type="password" />
       </div>
 
+      {/* Availability section (unchanged) */}
+      <div className="border-t border-outline-variant pt-4">
+        <div className="flex justify-between items-center mb-2">
+          <label className="text-xs font-medium text-on-surface-variant block">Weekly Availability (optional)</label>
+          <div className="flex gap-2">
+            <button type="button" onClick={addDefaultAvailability} className="text-xs text-primary hover:underline">
+              Set Mon-Fri 9-5
+            </button>
+            <button type="button" onClick={addBlock} className="text-xs text-primary hover:underline">
+              + Add Block
+            </button>
+          </div>
+        </div>
+        {availability.length === 0 && (
+          <p className="text-xs text-on-surface-variant">No availability set. You can add blocks below.</p>
+        )}
+        {availability.map((block, index) => (
+          <div key={index} className="flex items-center gap-2 mt-2">
+            <select
+              value={block.day_of_week}
+              onChange={(e) => updateBlock(index, 'day_of_week', Number(e.target.value))}
+              className="px-2 py-1 rounded border border-outline-variant bg-surface-bright text-sm"
+            >
+              {DAYS.map((day, i) => (
+                <option key={i} value={i}>{day}</option>
+              ))}
+            </select>
+            <input
+              type="time"
+              value={block.start_time}
+              onChange={(e) => updateBlock(index, 'start_time', e.target.value)}
+              className="px-2 py-1 rounded border border-outline-variant bg-surface-bright text-sm w-24"
+            />
+            <span className="text-xs">to</span>
+            <input
+              type="time"
+              value={block.end_time}
+              onChange={(e) => updateBlock(index, 'end_time', e.target.value)}
+              className="px-2 py-1 rounded border border-outline-variant bg-surface-bright text-sm w-24"
+            />
+            <button type="button" onClick={() => removeBlock(index)} className="text-error text-xs hover:underline">
+              Remove
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {/* Image upload section – always enabled */}
+      <div className="border-t border-outline-variant pt-4">
+        <label className="text-xs font-medium text-on-surface-variant block mb-1">Profile Image (optional)</label>
+        <input
+          type="file"
+          accept="image/*"
+          ref={fileInputRef}
+          onChange={(e) => setImageFile(e.target.files?.[0] || null)}
+          className="text-sm"
+        />
+        {imageFile && <span className="text-xs text-on-surface-variant ml-2">File selected: {imageFile.name}</span>}
+      </div>
+
       {error && <p className="text-sm text-error">{error}</p>}
       {success && <p className="text-sm text-secondary">{success}</p>}
 
@@ -217,6 +325,7 @@ function CreateDoctorForm({ onCreated }: { onCreated: () => void }) {
 }
 
 function CreatePatientForm({ onCreated }: { onCreated: () => void }) {
+  // ... unchanged ...
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [firstName, setFirstName] = useState('');
@@ -290,6 +399,7 @@ function CreatePatientForm({ onCreated }: { onCreated: () => void }) {
 }
 
 function CreateAdminForm({ onCreated }: { onCreated: () => void }) {
+  // ... unchanged ...
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -340,12 +450,6 @@ function CreateAdminForm({ onCreated }: { onCreated: () => void }) {
   );
 }
 
-/**
- * Direct booking, no AI involved: pick a registered patient, pick a
- * doctor, pick a date, then only the doctor's ACTUALLY-open slots for
- * that date are offered (fetched from the same privacy-safe
- * schedule-preview endpoint the patient booking calendar uses).
- */
 function BookAppointmentForm() {
   const [patients, setPatients] = useState<PatientRow[]>([]);
   const [doctors, setDoctors] = useState<any[]>([]);
@@ -364,9 +468,6 @@ function BookAppointmentForm() {
     getDoctors().then(setDoctors).catch(() => {});
   }, []);
 
-  // Whenever doctor or date changes, fetch that doctor's real availability
-  // for the week containing that date and pull out just that date's open
-  // (not booked, not off-duty) slots.
   useEffect(() => {
     const fetchTimes = async () => {
       setAvailableTimes([]);
@@ -375,10 +476,8 @@ function BookAppointmentForm() {
       setLoadingTimes(true);
       try {
         const chosen = new Date(date + 'T00:00:00');
-        const day = chosen.getDay();
-        const monday = new Date(chosen);
-        monday.setDate(chosen.getDate() - ((day + 6) % 7)); // back up to Monday
-        const weekStart = monday.toISOString().split('T')[0];
+        const monday = mondayOfLocalWeek(chosen);
+        const weekStart = toLocalISODate(monday);
 
         const preview = await getDoctorSchedulePreview(Number(doctorId), weekStart);
         const dayData = preview[date];
@@ -422,7 +521,6 @@ function BookAppointmentForm() {
       setResult(res);
       if (res.success) {
         setTime('');
-        // Re-fetch times so the just-booked slot disappears from the list.
         setAvailableTimes((prev) => prev.filter((t) => t !== time));
       }
     } catch (err: any) {
@@ -432,7 +530,7 @@ function BookAppointmentForm() {
     }
   };
 
-  const todayISO = new Date().toISOString().split('T')[0];
+  const todayISO = todayLocalISODate();
 
   return (
     <motion.form

@@ -8,6 +8,7 @@ import Calendar from '../components/Calendar';
 import BookingCalendar from '../components/BookingCalendar';
 import CalendarLegend from '../components/CalendarLegend';
 import { useAuth } from '../auth/AuthContext';
+import { todayLocalISODate } from '../utils/dateUtils';
 
 export default function CalendarPage() {
   const { user } = useAuth();
@@ -98,7 +99,7 @@ export default function CalendarPage() {
     }
   };
 
-  const todayISO = new Date().toISOString().split('T')[0];
+  const todayISO = todayLocalISODate();
 
   return (
     <div>

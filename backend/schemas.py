@@ -166,8 +166,28 @@ class TokenResponse(BaseModel):
     patient_id: Optional[int] = None
 
 
+class DoctorAvailabilityBlock(BaseModel):
+    """
+    One weekly recurring working-hours block, used when an admin sets a
+    new doctor's schedule at account-creation time.
+    day_of_week: 0=Sunday ... 6=Saturday (matches the DB convention - see
+    backend/availability.py::python_weekday_to_db_day for why).
+    start_time / end_time: "HH:MM" 24-hour strings.
+    """
+    day_of_week: int
+    start_time: str
+    end_time: str
+
+    @field_validator("day_of_week")
+    @classmethod
+    def _check_day(cls, v: int) -> int:
+        if not (0 <= v <= 6):
+            raise ValueError("day_of_week must be between 0 (Sunday) and 6 (Saturday).")
+        return v
+
+
 class AdminCreateDoctorRequest(BaseModel):
-    """Admin-only: creates a Doctor record and its login account together."""
+    """Admin-only: creates a Doctor record and its login account together, optionally with an initial weekly schedule."""
     username: str
     password: str
     first_name: str
@@ -175,6 +195,7 @@ class AdminCreateDoctorRequest(BaseModel):
     specialty: str
     years_of_experience: int
     bio: Optional[str] = None
+    availability: Optional[List[DoctorAvailabilityBlock]] = None
 
     _username_check = field_validator("username")(classmethod(lambda cls, v: _validate_username(v)))
     _password_check = field_validator("password")(classmethod(lambda cls, v: _validate_password(v)))

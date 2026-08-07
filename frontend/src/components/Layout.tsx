@@ -209,7 +209,7 @@ export default function Layout() {
         transition={{ duration: 0.4, delay: 0.2 }}
       >
         <div className="bg-white/70 backdrop-blur-sm rounded-xl p-4 md:p-6 shadow-sm border border-outline-variant/30 relative overflow-hidden">
-          {/* ✅ Use AnimatePresence with mode="wait" and the outlet */}
+          {/* Use AnimatePresence with mode="wait" and the outlet */}
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}
@@ -268,7 +268,7 @@ export default function Layout() {
             whileHover={{ scale: 1.02 }}
             transition={{ type: 'spring', stiffness: 300 }}
           >
-            © 2024 Stellaris General Hospital. Providing trusted care.
+            © 2026 Stellaris General Hospital. Providing trusted care.
           </motion.p>
           <div className="flex flex-wrap gap-4 text-sm text-on-surface-variant">
             {['Contact Us', 'Emergency Services', 'Privacy Policy', 'Terms of Service'].map((item) => (

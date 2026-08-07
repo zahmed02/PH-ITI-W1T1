@@ -56,6 +56,7 @@ export interface CreateDoctorPayload {
   specialty: string;
   years_of_experience: number;
   bio?: string;
+  availability?: { day_of_week: number; start_time: string; end_time: string }[];
 }
 
 export interface CreateAdminPayload {

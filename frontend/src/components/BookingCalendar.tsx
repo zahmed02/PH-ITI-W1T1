@@ -5,6 +5,7 @@ import { getDoctorSchedulePreview, getDoctor, bookAppointment } from '../api/cli
 import { useAuth } from '../auth/AuthContext';
 import { SLOT_STATUS } from './calendarStatus';
 import type { SlotStatus } from './calendarStatus';
+import { toLocalISODate } from '../utils/dateUtils';
 
 interface BookingCalendarProps {
   doctorId: number;
@@ -24,7 +25,6 @@ interface PreviewResponse {
 }
 
 function parseHour12(label: string): number {
-  // "09:00 AM" -> 9, "02:00 PM" -> 14, "12:00 AM" -> 0, "12:00 PM" -> 12
   const [time, meridiem] = label.split(' ');
   let [hour] = time.split(':').map(Number);
   if (meridiem === 'AM' && hour === 12) hour = 0;
@@ -32,21 +32,10 @@ function parseHour12(label: string): number {
   return hour;
 }
 
-function toISODate(d: Date): string {
-  return d.toISOString().split('T')[0];
-}
-
 function to24Hour(hour: number): string {
   return `${hour.toString().padStart(2, '0')}:00`;
 }
 
-/**
- * The patient-facing "which slots are open" calendar. Deliberately never
- * shows who holds a booked slot - only whether it's available or taken.
- * Clicking an available slot books it DIRECTLY (no AI assistant needed) -
- * the AI chat remains available as an alternative for patients who'd
- * rather just ask in plain language, but this is the manual path.
- */
 export default function BookingCalendar({ doctorId, weekStart }: BookingCalendarProps) {
   const { user } = useAuth();
   const [doctor, setDoctor] = useState<any>(null);
@@ -67,7 +56,7 @@ export default function BookingCalendar({ doctorId, weekStart }: BookingCalendar
 
   const loadPreview = async () => {
     try {
-      const data = await getDoctorSchedulePreview(doctorId, toISODate(days[0]));
+      const data = await getDoctorSchedulePreview(doctorId, toLocalISODate(days[0]));
       setPreview(data);
     } catch (err) {
       console.error(err);
@@ -103,7 +92,7 @@ export default function BookingCalendar({ doctorId, weekStart }: BookingCalendar
   }
 
   const statusFor = (day: Date, hour: number): SlotStatus => {
-    const dayData = preview[toISODate(day)];
+    const dayData = preview[toLocalISODate(day)];
     if (!dayData || dayData.slots.length === 0) return 'not-working';
     const match = dayData.slots.find((s) => parseHour12(s.time) === hour);
     return match ? match.status : 'not-working';
@@ -124,13 +113,12 @@ export default function BookingCalendar({ doctorId, weekStart }: BookingCalendar
       const result = await bookAppointment({
         doctor_id: doctorId,
         patient_id: user.patientId,
-        date: toISODate(pendingSlot.date),
+        date: toLocalISODate(pendingSlot.date),
         time: to24Hour(pendingSlot.hour),
       });
       if (result.success) {
         setJustBooked(true);
-        await loadPreview(); // reflect the now-booked slot immediately
-        // Let the success checkmark play briefly before closing the dialog.
+        await loadPreview();
         setTimeout(() => {
           setSuccessMessage(
             `Booked with Dr. ${doctor.first_name} ${doctor.last_name} on ${result.date} at ${result.time}. A confirmation email is on its way.`
@@ -143,7 +131,7 @@ export default function BookingCalendar({ doctorId, weekStart }: BookingCalendar
       }
     } catch (err: any) {
       setBookingError(err?.response?.data?.detail || 'Could not book that slot. It may have just been taken.');
-      await loadPreview(); // someone else may have grabbed it - refresh to show the truth
+      await loadPreview();
     } finally {
       setBooking(false);
     }
@@ -247,7 +235,6 @@ export default function BookingCalendar({ doctorId, weekStart }: BookingCalendar
         </div>
       </div>
 
-      {/* Booking confirmation */}
       <AnimatePresence>
         {pendingSlot && (
           <motion.div

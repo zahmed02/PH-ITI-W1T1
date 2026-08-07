@@ -26,6 +26,7 @@ Design notes:
 import os
 import logging
 from datetime import datetime, timedelta, timezone
+from datetime import time as time_type
 from typing import Optional
 
 import bcrypt
@@ -37,7 +38,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from backend.database import get_db
-from backend.models import Doctor, Patient, User
+from backend.models import Doctor, Patient, User, DoctorAvailability
 from backend.schemas import (
     AdminCreateAdminRequest,
     AdminCreateDoctorRequest,
@@ -259,9 +260,10 @@ def admin_create_doctor(
     db: Session = Depends(get_db),
 ):
     """
-    Admin-only. Creates a new Doctor record and its login account together.
-    Returns the new account's info - NOT a token; the admin stays logged in
-    as themselves, they are not logged in as the new doctor.
+    Admin-only. Creates a new Doctor record and its login account
+    together, optionally with an initial weekly schedule. Returns the
+    new account's info - NOT a token; the admin stays logged in as
+    themselves, they are not logged in as the new doctor.
     """
     existing_user = db.query(User).filter(func.lower(User.username) == payload.username.lower()).first()
     if existing_user:
@@ -276,6 +278,33 @@ def admin_create_doctor(
     )
     db.add(doctor)
     db.flush()
+
+    # Optional initial weekly schedule, set in the same request rather
+    # than requiring a separate step after the doctor already exists.
+    if payload.availability:
+        for block in payload.availability:
+            try:
+                start = time_type.fromisoformat(block.start_time)
+                end = time_type.fromisoformat(block.end_time)
+            except ValueError:
+                db.rollback()
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid time format in availability (expected HH:MM): "
+                           f"start={block.start_time!r}, end={block.end_time!r}",
+                )
+            if end <= start:
+                db.rollback()
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"end_time must be after start_time for day_of_week={block.day_of_week}.",
+                )
+            db.add(DoctorAvailability(
+                doctor_id=doctor.id,
+                day_of_week=block.day_of_week,
+                start_time=start,
+                end_time=end,
+            ))
 
     user = User(
         username=payload.username,
